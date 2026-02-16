@@ -1,10 +1,16 @@
-# AGENTS.md - Draconis++ Coding Agent Guide
+# AGENTS.md - Draconis++ Monorepo Coding Agent Guide
 
 This file provides essential context for AI coding agents working in this repository.
 
 ## Project Overview
 
 Draconis++ is a cross-platform system information tool written in **C++26**. It supports Windows, macOS, Linux, FreeBSD, OpenBSD, NetBSD, Haiku, and SerenityOS.
+
+This monorepo contains:
+- `core/` - The main C++ library and CLI
+- `plugins/` - Plugin implementations (weather, now_playing, formats)
+- `bindings/` - Language bindings (Rust, Python, Lua, C#, Kotlin, C3)
+- `c-api/` - C API wrapper for all bindings
 
 ## Build System
 
@@ -18,7 +24,7 @@ just setup              # meson setup build
 just build              # meson compile -C build
 just test               # Run all tests
 just test-one NAME      # Run single test (e.g., just test-one "Types")
-just format             # clang-format on src/include/plugins
+just format             # clang-format on core/src core/include plugins
 just lint               # clang-tidy -p build
 
 # Direct meson for single tests:
@@ -46,7 +52,7 @@ meson test -C build "Error Handling"
 | Namespaces          | lowercase    | `draconis::core::system`   |
 | Enum Values         | CamelCase    | `DracErrorCode::NotFound`  |
 
-### Type System (`<Drac++/Utils/Types.hpp>`)
+### Type System (`core/include/Drac++/Utils/Types.hpp`)
 
 ```cpp
 // Primitives: u8-u64, i8-i64, f32, f64, usize, isize
@@ -85,7 +91,7 @@ auto GetSystemName() -> Result<String>;
 auto SafeOperation() noexcept -> bool;
 ```
 
-### Error Handling (`<Drac++/Utils/Error.hpp>`)
+### Error Handling (`core/include/Drac++/Utils/Error.hpp`)
 
 **Prefer `Result<T>` over exceptions:**
 ```cpp
@@ -102,7 +108,7 @@ return Result<String>{"success"};
 return {};  // For Result<void>
 ```
 
-### Logging (`<Drac++/Utils/Logging.hpp>`)
+### Logging (`core/include/Drac++/Utils/Logging.hpp`)
 
 ```cpp
 debug_log("Debug: {}", value);
@@ -115,16 +121,46 @@ error_at(someError);  // Log DracError with source location
 ## Project Structure
 
 ```
-include/Drac++/           # Public API headers
-  Core/, Services/, Utils/
-src/
-  Lib/                    # Library implementation
-    Core/                 # Cross-platform core
-    OS/                   # Platform-specific (.cpp, macOS/*.mm)
-  CLI/                    # Command-line interface
-    Config/, Core/, UI/
-tests/                    # Unit tests (boost.ut)
+core/
+  include/Drac++/       # Public API headers
+    Core/, Services/, Utils/
+  src/
+    Lib/                # Library implementation
+      Core/             # Cross-platform core
+      OS/               # Platform-specific (.cpp, macOS/*.mm)
+    CLI/                # Command-line interface
+      Config/, Core/, UI/
+  tests/                # Unit tests (boost.ut)
+
+plugins/                # Plugin implementations
+  weather/
+  now_playing/
+  json_format/
+  markdown_format/
+  yaml_format/
+
+bindings/               # Language bindings (all use C API)
+  rust/
+  python/
+  lua/
+  csharp/
+  kotlin/
+  c3/
+
+c-api/                  # C API wrapper
+  include/draconis_c.h
+  src/draconis_c.cpp
 ```
+
+## Static Plugin System
+
+Plugins can be statically linked via `DRAC_STATIC_PLUGINS` environment variable:
+
+```bash
+DRAC_STATIC_PLUGINS=now_playing,weather
+```
+
+All bindings use the C API (`c-api/include/draconis_c.h`), not the C++ API directly.
 
 ## Testing (Boost.UT)
 

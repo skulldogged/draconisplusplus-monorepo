@@ -1,6 +1,6 @@
-# ========================= #
-#   Draconis++ Build System  #
-# ========================= #
+# ============================== #
+#   Draconis++ Monorepo Build    #
+# ============================== #
 
 # Use PowerShell on Windows
 set windows-shell := ["cmd.exe", "/c"]
@@ -13,7 +13,7 @@ default:
 build_dir := "build"
 
 # Platform-specific executable path
-exe_path := if os() == "windows" { ".\\build\\src\\CLI\\draconis++.exe" } else { "./build/src/CLI/draconis++" }
+exe_path := if os() == "windows" { ".\\build\\core\\src\\CLI\\draconis++.exe" } else { "./build/core/src/CLI/draconis++" }
 
 # ===================== #
 #   Setup & Configure   #
@@ -93,14 +93,31 @@ rebuild: clean build
 
 # Format all source files
 format:
-    clang-format -i src include plugins
+    clang-format -i core/src core/include plugins c-api/src c-api/include bindings/lua/src bindings/python/src
 
+# Run static analysis
 lint:
     clang-tidy -p {{build_dir}}
 
 # Generate documentation with Doxygen
 docs:
-    doxygen Doxyfile
+    doxygen core/Doxyfile
+
+# ===================== #
+#   Rust Bindings       #
+# ===================== #
+
+# Build Rust bindings
+build-rust:
+    cd bindings/rust && cargo build
+
+# Build Rust bindings in release mode
+build-rust-release:
+    cd bindings/rust && cargo build --release
+
+# Run Rust tests
+test-rust:
+    cd bindings/rust && cargo test
 
 # ===================== #
 #   Installation        #

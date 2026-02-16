@@ -11,7 +11,7 @@ option('use_linked_pci_ids', type: 'boolean', value: false, description: 'Use li
 # Build options
 option('build_cli', type: 'boolean', value: true, description: 'Build the CLI application')
 option('build_examples', type: 'boolean', value: false, description: 'Build example programs')
-option('build_tests', type: 'boolean', value: false, description: 'Build unit tests')
+option('build_tests', type: 'boolean', value: true, description: 'Build unit tests')
 
 # Plugin options
 option('plugins', type: 'feature', value: 'auto', description: 'Enable plugin system')

@@ -1,0 +1,43 @@
+name: Build
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux
+    runs-on: native-linux
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add custom tools to PATH
+        run: echo "/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:$PATH" >> $GITHUB_PATH
+
+      - name: Build and test package
+        id: build
+        run: echo "path=$(nix build .#musl-generic --no-link --print-out-paths)" >> $GITHUB_OUTPUT
+
+      - name: Check build
+        run: nix flake check --impure
+
+      - name: Push to Cachix
+        run: cachix push pupbrained ${{ steps.build.outputs.path }}
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          CACHIX_SIGNING_KEY: ${{ secrets.CACHIX_SIGNING_KEY }}
+
+      - name: Upload Nix musl-generic Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: linux-build
+          path: ${{ steps.build.outputs.path }}/bin/draconis++

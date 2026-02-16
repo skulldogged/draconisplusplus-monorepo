@@ -1,5 +1,5 @@
 {
-  description = "C/C++ environment";
+  description = "Draconis++ Monorepo - C/C++ environment with bindings";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -16,8 +16,6 @@
   }: let
     inherit (nixpkgs) lib;
 
-    # Optional override to provide a local/plugins source without requiring
-    # an additional flake input. When unset, plugins are not vendored.
     pluginsSrc =
       let envPath = builtins.getEnv "DRACONIS_PLUGINS_SRC"; in
       if envPath == ""
@@ -118,16 +116,17 @@
               ninja
               pkg-config
               python3
+              rustup
+              lua
+              dotnet-sdk_8
 
               (writeScriptBin "build" "meson compile -C build")
               (writeScriptBin "clean" ("meson setup build --wipe -Dprecompiled_config=true" + lib.optionalString pkgs.stdenv.isLinux " -Duse_linked_pci_ids=true"))
-              (writeScriptBin "run" "meson compile -C build && build/draconis++")
+              (writeScriptBin "run" "meson compile -C build && build/core/src/CLI/draconis++")
             ])
             ++ devShellDeps;
 
           NIX_ENFORCE_NO_NATIVE = 0;
-
-
 
           shellHook =
             lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
