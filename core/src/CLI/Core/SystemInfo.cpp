@@ -109,10 +109,10 @@ namespace draconis::core::system {
     debug_log("SystemInfo: Getting date");
     this->date = GetDate();
 
-    if constexpr (DRAC_ENABLE_PACKAGECOUNT) {
-      debug_log("SystemInfo: Getting package count");
-      this->packageCount = draconis::services::packages::GetTotalCount(cache, config.enabledPackageManagers);
-    }
+#if DRAC_ENABLE_PACKAGECOUNT
+    debug_log("SystemInfo: Getting package count");
+    this->packageCount = draconis::services::packages::GetTotalCount(cache, config.enabledPackageManagers);
+#endif
 
 #if DRAC_ENABLE_PLUGINS
     debug_log("SystemInfo: Collecting plugin data");

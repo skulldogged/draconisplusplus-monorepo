@@ -360,7 +360,8 @@ namespace draconis::config {
       cfg.logo.height    = tomlCfg.logo.height == 0 ? std::nullopt : Option<u32>(tomlCfg.logo.height);
 
       // Package manager settings
-      if constexpr (DRAC_ENABLE_PACKAGECOUNT) {
+#if DRAC_ENABLE_PACKAGECOUNT
+      {
         using enum draconis::services::packages::Manager;
 
         cfg.enabledPackageManagers = None;
@@ -416,12 +417,13 @@ namespace draconis::config {
             warn_log("Unknown package manager in config: {}", val);
         }
       }
+#endif
 
       // Plugin settings
-      if constexpr (DRAC_ENABLE_PLUGINS) {
-        cfg.plugins.enabled  = tomlCfg.plugins.enabled;
-        cfg.plugins.autoLoad = tomlCfg.plugins.autoLoad;
-      }
+#if DRAC_ENABLE_PLUGINS
+      cfg.plugins.enabled  = tomlCfg.plugins.enabled;
+      cfg.plugins.autoLoad = tomlCfg.plugins.autoLoad;
+#endif
 
       // UI layout settings
       cfg.ui.layout.clear();

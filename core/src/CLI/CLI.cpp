@@ -193,8 +193,9 @@ namespace draconis::cli {
     DRAC_CHECK(data.shell, "Shell");
     DRAC_CHECK(data.uptime, "Uptime");
 
-    if constexpr (DRAC_ENABLE_PACKAGECOUNT)
-      DRAC_CHECK(data.packageCount, "PackageCount");
+#if DRAC_ENABLE_PACKAGECOUNT
+    DRAC_CHECK(data.packageCount, "PackageCount");
+#endif
 
 #undef DRAC_CHECK
 
@@ -309,8 +310,9 @@ namespace draconis::cli {
     if (data.uptime)
       output.uptimeSeconds = data.uptime->count();
 
-    if constexpr (DRAC_ENABLE_PACKAGECOUNT)
-      DRAC_SET_OPTIONAL(packageCount);
+#if DRAC_ENABLE_PACKAGECOUNT
+    DRAC_SET_OPTIONAL(packageCount);
+#endif
 
 #if DRAC_ENABLE_PLUGINS
     output.pluginFields = data.pluginData;
