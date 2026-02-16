@@ -1,0 +1,39 @@
+BasedOnStyle: Chromium
+AlignAfterOpenBracket: BlockIndent
+AlignArrayOfStructures: Right
+AlignConsecutiveAssignments:
+  Enabled: true
+AlignConsecutiveDeclarations:
+  Enabled: true
+  PadOperators: true
+AlignConsecutiveMacros:
+  Enabled: true
+AlignConsecutiveShortCaseStatements:
+  Enabled: true
+AlignOperands: DontAlign
+AllowShortBlocksOnASingleLine: Always
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortLoopsOnASingleLine: true
+BinPackArguments: false
+BreakBeforeBraces: Attach
+ColumnLimit: 0
+ConstructorInitializerIndentWidth: 2
+ContinuationIndentWidth: 2
+Cpp11BracedListStyle: false
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^(<|")Drac\+\+/Utils/.*'
+    Priority: 3
+  - Regex: '^(<|")Drac\+\+/.*'
+    Priority: 2
+  - Regex: '".*"'
+    Priority: 4
+  - Regex: '<.*>'
+    Priority: 1
+IndentExternBlock: Indent
+IndentPPDirectives: BeforeHash
+NamespaceIndentation: All
+QualifierAlignment: Left
+SpaceBeforeCpp11BracedList: true
+SpacesBeforeTrailingComments: 1

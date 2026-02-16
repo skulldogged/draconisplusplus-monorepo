@@ -1,0 +1,32 @@
+# ============================== #
+#  Draconis++ Options           #
+# ============================== #
+
+# Core options
+option('default_language', type: 'string', value: 'en', description: 'Default language code')
+option('caching', type: 'feature', value: 'auto', description: 'Enable caching')
+option('packagecount', type: 'feature', value: 'auto', description: 'Enable package counting')
+option('use_linked_pci_ids', type: 'boolean', value: false, description: 'Use linked pci.ids file')
+
+# Build options
+option('build_cli', type: 'boolean', value: true, description: 'Build the CLI application')
+option('build_examples', type: 'boolean', value: false, description: 'Build example programs')
+option('build_tests', type: 'boolean', value: false, description: 'Build unit tests')
+
+# Plugin options
+option('plugins', type: 'feature', value: 'auto', description: 'Enable plugin system')
+option('static_plugins', type: 'array', value: [], description: 'List of static plugins to compile in')
+option('precompiled_config', type: 'boolean', value: false, description: 'Use precompiled configuration')
+
+# Platform-specific options
+option('xcb', type: 'feature', value: 'auto', description: 'Enable XCB support')
+option('wayland', type: 'feature', value: 'auto', description: 'Enable Wayland support')
+option('pugixml', type: 'feature', value: 'auto', description: 'Enable pugixml support')
+
+# Binding options
+option('build_rust', type: 'boolean', value: false, description: 'Build Rust bindings')
+option('build_python', type: 'boolean', value: false, description: 'Build Python bindings')
+option('build_lua', type: 'boolean', value: false, description: 'Build Lua bindings')
+option('build_kotlin', type: 'boolean', value: false, description: 'Build Kotlin bindings')
+option('build_c3', type: 'boolean', value: false, description: 'Build C3 bindings')
+option('build_csharp', type: 'boolean', value: false, description: 'Build C# bindings')

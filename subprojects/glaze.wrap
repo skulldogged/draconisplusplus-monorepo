@@ -1,0 +1,5 @@
+[wrap-git]
+url = https://github.com/stephenberry/glaze.git
+revision = 7e8ca82487bb67b655d1b1fb049e68ce12b8ad59
+depth = 1
+directory = glaze

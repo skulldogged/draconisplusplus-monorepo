@@ -1,0 +1,119 @@
+# Build directories
+build/
+cmake-build-*/
+out/
+bin/
+CMakeFiles/
+Testing/
+
+# IDE/Editor
+.idea/
+.vs/
+.vscode/
+.direnv/
+.xmake/
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Build artifacts
+*.o
+*.obj
+*.lib
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.out
+*.app
+*.pdb
+*.ilk
+*.exp
+build.ninja
+CMakeCache.txt
+cmake_install.cmake
+CMakeSettings.json
+compile_commands.json
+Makefile
+
+# Generated files
+/config.hpp
+config.toml
+imgui.ini
+result
+dev_profile*
+local.ini
+
+# Package managers
+vcpkg_installed/
+node_modules/
+
+# Rust
+target/
+Cargo.lock
+**/target/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+*.egg
+dist/
+wheels/
+*.whl
+
+# C#
+**/obj/
+**/bin/
+*.nupkg
+
+# Kotlin/Java
+*.class
+*.jar
+*.war
+*.ear
+.gradle/
+build/
+
+# Downloaded archives
+*.zip
+*.tar.gz
+*.tar.xz
+
+# Meson subprojects (keep wraps)
+subprojects/*
+!subprojects/*.wrap
+!subprojects/*.wrap.lock
+!subprojects/packagefiles/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+.cache/
+
+# Test coverage
+coverage/
+*.gcda
+*.gcno
+*.lcov
+
+# Documentation
+docs/_build/
+doxygen/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Vendored third-party libraries (use meson wraps instead)
+bindings/third_party/

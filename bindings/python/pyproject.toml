@@ -1,0 +1,10 @@
+[project]
+name = "draconis"
+version = "0.1.0"
+description = "Python bindings for draconis++ system info library"
+readme = "README.md"
+requires-python = ">=3.9"
+
+[build-system]
+requires = ["meson-python>=0.15", "nanobind>=2.0"]
+build-backend = "mesonpy"

@@ -1,0 +1,39 @@
+[package]
+name = "draconis"
+version = "0.1.0"
+edition = "2021"
+description = "Cross-platform system information library"
+license = "MIT"
+repository = "https://github.com/skulldogged/draconisplusplus"
+keywords = ["system", "info", "hardware", "cross-platform"]
+categories = ["os", "hardware-support", "api-bindings"]
+
+# Environment variables for build configuration:
+# - DRAC_PLUGINS: Plugin mode (auto/enabled/disabled) - default: auto
+# - DRAC_STATIC_PLUGINS: Comma-separated list of static plugins to compile in
+# - DRAC_CACHING: Enable caching (auto/enabled/disabled) - default: auto
+# - DRAC_PACKAGECOUNT: Enable package counting (auto/enabled/disabled) - default: auto
+# - DRAC_BUILD_TYPE: Build type (debug/release/debugoptimized) - default: release
+#
+# Example: DRAC_STATIC_PLUGINS=now_playing,weather cargo build
+
+[dependencies]
+thiserror = "1.0"
+
+[build-dependencies]
+bindgen = "0.69"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_SystemInformation",
+    "Win32_System_Console",
+    "Win32_UI_Input",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_Registry",
+] }
+
+[dev-dependencies]
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--cfg", "docsrs"]
