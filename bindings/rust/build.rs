@@ -67,7 +67,7 @@ fn run_meson_build(monorepo_root: &Path, build_dir: &Path) {
     if let Some(val) = &static_plugins {
       args.push("-Dplugins=enabled".to_string());
       args.push(format!("-Dstatic_plugins={}", val));
-      args.push("-Dprecompiled_config=true".to_string());
+      args.push("-Dprecompiled_config=false".to_string());
     } else {
       args.push(format!(
         "-Dplugins={}",
@@ -103,6 +103,7 @@ fn run_meson_build(monorepo_root: &Path, build_dir: &Path) {
 
     if let Some(val) = &static_plugins {
       args.push(format!("-Dstatic_plugins={}", val));
+      args.push("-Dprecompiled_config=false".to_string());
     }
 
     if let Some(val) = &packagecount {
