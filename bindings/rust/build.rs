@@ -173,8 +173,18 @@ fn link_libraries(build_dir: &Path) {
     println!("cargo:rustc-link-search=native={}", mimalloc_dir.display());
   }
 
+  let curl_dir = build_dir.join("subprojects/curl-8.12.1/lib");
+  let has_curl = curl_dir.exists();
+  if has_curl {
+    println!("cargo:rustc-link-search=native={}", curl_dir.display());
+  }
+
   println!("cargo:rustc-link-lib=static=drac++");
   println!("cargo:rustc-link-lib=static=draconis_c");
+
+  if has_curl {
+    println!("cargo:rustc-link-lib=static=curl");
+  }
 
   if has_mimalloc {
     println!("cargo:rustc-link-lib=static=mimalloc");
