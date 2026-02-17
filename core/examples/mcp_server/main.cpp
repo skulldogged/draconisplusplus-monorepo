@@ -349,78 +349,78 @@ namespace {
     return { makeSuccessResult(info) };
   }
 
-  auto PackageCountHandler(const Map<String, String>& params) -> ToolResponse {
-    if constexpr (DRAC_ENABLE_PACKAGECOUNT) {
-      using enum Manager;
+  auto PackageCountHandler([[maybe_unused]] const Map<String, String>& params) -> ToolResponse {
+#if DRAC_ENABLE_PACKAGECOUNT
+    using enum Manager;
 
-      Manager enabledManagers = None;
+    Manager enabledManagers = None;
 
-      static const UnorderedMap<String, Manager> MANAGER_MAP = {
-        {  "cargo",  Cargo },
+    static const UnorderedMap<String, Manager> MANAGER_MAP = {
+      {  "cargo",  Cargo },
 #if defined(__linux__) || defined(__APPLE__)
-        {    "nix",    Nix },
+      {    "nix",    Nix },
 #endif
 #ifdef __linux__
-        {    "apk",    Apk },
-        {   "dpkg",   Dpkg },
-        {   "moss",   Moss },
-        { "pacman", Pacman },
-        {    "rpm",    Rpm },
-        {   "xbps",   Xbps },
+      {    "apk",    Apk },
+      {   "dpkg",   Dpkg },
+      {   "moss",   Moss },
+      { "pacman", Pacman },
+      {    "rpm",    Rpm },
+      {   "xbps",   Xbps },
 #elifdef __APPLE__
-        { "homebrew", Homebrew },
-        { "macports", Macports },
+      { "homebrew", Homebrew },
+      { "macports", Macports },
 #elifdef _WIN32
-        { "winget", Winget },
-        { "chocolatey", Chocolatey },
-        { "scoop", Scoop },
+      { "winget", Winget },
+      { "chocolatey", Chocolatey },
+      { "scoop", Scoop },
 #elif defined(__FreeBSD__) || defined(__DragonFly__)
-        { "pkgng", PkgNg },
+      { "pkgng", PkgNg },
 #elifdef __NetBSD__
-        { "pkgsrc", PkgSrc },
+      { "pkgsrc", PkgSrc },
 #elifdef __HAIKU__
-        { "haikupkg", HaikuPkg },
+      { "haikupkg", HaikuPkg },
 #endif
-      };
+    };
 
-      auto mgrIter = params.find("managers");
+    auto mgrIter = params.find("managers");
 
-      if (mgrIter != params.end() && !mgrIter->second.empty()) {
-        String      managersStr = mgrIter->second;
-        Vec<String> managersList;
+    if (mgrIter != params.end() && !mgrIter->second.empty()) {
+      String      managersStr = mgrIter->second;
+      Vec<String> managersList;
 
-        managersList.reserve(std::count(managersStr.begin(), managersStr.end(), ',') + 1);
-        usize pos = 0;
+      managersList.reserve(std::count(managersStr.begin(), managersStr.end(), ',') + 1);
+      usize pos = 0;
 
-        while ((pos = managersStr.find(',')) != String::npos) {
-          managersList.emplace_back(managersStr.substr(0, pos));
-          managersStr.erase(0, pos + 1);
-        }
-
-        managersList.emplace_back(managersStr);
-
-        for (const String& mgr : managersList) {
-          auto iter = MANAGER_MAP.find(mgr);
-
-          if (iter != MANAGER_MAP.end())
-            enabledManagers |= iter->second;
-        }
-      } else {
-        for (const auto& [_, value] : MANAGER_MAP)
-          enabledManagers |= value;
+      while ((pos = managersStr.find(',')) != String::npos) {
+        managersList.emplace_back(managersStr.substr(0, pos));
+        managersStr.erase(0, pos + 1);
       }
 
-      if (enabledManagers == None)
-        return { makeErrorResult("No valid package managers specified or available"), true };
+      managersList.emplace_back(managersStr);
 
-      Result<Map<String, u64>> countResult = GetIndividualCounts(GetCacheManager(), enabledManagers);
-      if (!countResult)
-        return { makeErrorResult("Failed to get package count: " + countResult.error().message), true };
+      for (const String& mgr : managersList) {
+        auto iter = MANAGER_MAP.find(mgr);
 
-      return { makeSuccessResult(*countResult) };
+        if (iter != MANAGER_MAP.end())
+          enabledManagers |= iter->second;
+      }
     } else {
-      return { makeErrorResult("Package counting not enabled in this build"), true };
+      for (const auto& [_, value] : MANAGER_MAP)
+        enabledManagers |= value;
     }
+
+    if (enabledManagers == None)
+      return { makeErrorResult("No valid package managers specified or available"), true };
+
+    Result<Map<String, u64>> countResult = GetIndividualCounts(GetCacheManager(), enabledManagers);
+    if (!countResult)
+      return { makeErrorResult("Failed to get package count: " + countResult.error().message), true };
+
+    return { makeSuccessResult(*countResult) };
+#else
+    return { makeErrorResult("Package counting not enabled in this build"), true };
+#endif
   }
 
   auto NetworkInfoHandler() -> ToolResponse {
@@ -502,7 +502,8 @@ namespace {
       info.uptime          = { .seconds = seconds, .formatted = std::format("{}h {}m {}s", hours, minutes, remainingSeconds) };
     }
 
-    if constexpr (DRAC_ENABLE_PACKAGECOUNT) {
+#if DRAC_ENABLE_PACKAGECOUNT
+    {
       using enum Manager;
 
       Manager enabledManagers = Cargo;
@@ -526,6 +527,7 @@ namespace {
       if (Result<Map<String, u64>> packages = GetIndividualCounts(cacheManager, enabledManagers); packages)
         info.packages = *packages;
     }
+#endif
 
     return { makeSuccessResult(info) };
   }

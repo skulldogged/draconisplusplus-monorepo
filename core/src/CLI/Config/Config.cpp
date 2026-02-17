@@ -281,8 +281,9 @@ namespace draconis::config {
     Config cfg;
     cfg.general.name = DRAC_USERNAME;
 
-    if constexpr (DRAC_ENABLE_PACKAGECOUNT)
-      cfg.enabledPackageManagers = config::DRAC_ENABLED_PACKAGE_MANAGERS;
+#if DRAC_ENABLE_PACKAGECOUNT
+    cfg.enabledPackageManagers = config::DRAC_ENABLED_PACKAGE_MANAGERS;
+#endif
 
   #if DRAC_ENABLE_PLUGINS
     cfg.plugins.enabled = true;
