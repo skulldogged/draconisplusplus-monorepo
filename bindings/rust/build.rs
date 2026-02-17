@@ -14,7 +14,9 @@ fn main() {
     .and_then(|p| p.parent())
     .expect("Failed to find monorepo root");
 
-  let build_dir = monorepo_root.join("build");
+  // Use a separate build directory for Rust bindings to avoid conflicts
+  // with the main monorepo build configuration
+  let build_dir = monorepo_root.join("build-rust");
 
   println!("cargo:rerun-if-env-changed=DRAC_PLUGINS");
   println!("cargo:rerun-if-env-changed=DRAC_STATIC_PLUGINS");
