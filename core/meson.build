@@ -190,17 +190,6 @@ if host_system != 'darwin'
   )
 endif
 
-# Precompiled configuration
-if get_option('precompiled_config') == true
-  config_hpp_path = meson.project_source_root() / 'config.hpp'
-
-  if not fs.is_file(config_hpp_path)
-    error(
-      'Option "precompiled_config" is enabled, but "@0@" was not found.'.format(config_hpp_path),
-    )
-  endif
-endif
-
 if feature_states['packagecount'] and host_system in ['darwin', 'linux']
   lib_deps += dependency('SQLiteCpp')
 endif

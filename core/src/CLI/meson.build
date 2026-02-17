@@ -1,6 +1,19 @@
 # ------- #
 #  Files  #
 # ------- #
+
+# Precompiled configuration - config.hpp is only required when building the CLI
+if get_option('precompiled_config') == true
+  config_hpp_path = meson.project_source_root() / 'config.hpp'
+  fs = import('fs')
+
+  if not fs.is_file(config_hpp_path)
+    error(
+      'Option "precompiled_config" is enabled, but "@0@" was not found.'.format(config_hpp_path),
+    )
+  endif
+endif
+
 main_app_sources = files('CLI.cpp', 'Config/Config.cpp', 'Core/SystemInfo.cpp', 'UI/UI.cpp', 'main.cpp')
 
 # ------------------------- #
