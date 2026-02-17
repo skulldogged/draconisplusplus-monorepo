@@ -159,7 +159,7 @@ plugins_dir = meson.project_source_root() / 'plugins'
 plugins_includes = []
 
 if fs.is_dir(plugins_dir)
-  plugins_includes = [include_directories('plugins', is_system: true)]
+  plugins_includes = [include_directories('../plugins', is_system: true)]
 else
   message('Plugins directory not found; static plugins will be unavailable unless provided externally.')
 endif
