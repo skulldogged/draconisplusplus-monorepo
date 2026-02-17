@@ -1,10 +1,10 @@
 #pragma once
 
+#include <Drac++/Utils/Logging.hpp>
+
 #if !DRAC_PRECOMPILED_CONFIG
   #include <cctype>     // std::tolower
   #include <filesystem> // std::filesystem::path
-
-  #include <Drac++/Utils/Logging.hpp>
 #endif
 
 #if DRAC_ENABLE_PACKAGECOUNT

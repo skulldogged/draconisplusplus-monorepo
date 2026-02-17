@@ -20,7 +20,7 @@ namespace fs = std::filesystem;
     #include <Drac++/Core/StaticPlugins.hpp>
   #endif
 
-  #include "../config.hpp" // user-defined config
+  #include "../../../config.hpp" // user-defined config
 #endif
 
 #if !DRAC_PRECOMPILED_CONFIG

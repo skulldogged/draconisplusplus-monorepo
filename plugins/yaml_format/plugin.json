@@ -1,5 +1,6 @@
 {
   "name": "yaml_format",
+  "class": "YamlFormatPlugin",
   "description": "Cross-platform output formatter for YAML output using RapidYAML (single-header)",
   "platform": "all",
   "deps": []

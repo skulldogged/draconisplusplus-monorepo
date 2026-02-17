@@ -5,7 +5,7 @@
 # Core options
 option('default_language', type: 'string', value: 'en', description: 'Default language code')
 option('caching', type: 'feature', value: 'auto', description: 'Enable caching')
-option('packagecount', type: 'feature', value: 'auto', description: 'Enable package counting')
+option('packagecount', type: 'feature', value: 'enabled', description: 'Enable package counting')
 option('use_linked_pci_ids', type: 'boolean', value: false, description: 'Use linked pci.ids file')
 
 # Build options

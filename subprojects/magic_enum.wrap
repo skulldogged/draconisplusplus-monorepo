@@ -1,2 +1,7 @@
-[wrap-redirect]
-filename = draconis/subprojects/magic_enum.wrap
+[wrap-git]
+url = https://github.com/Neargye/magic_enum.git
+revision = v0.9.7
+depth = 1
+
+[provide]
+dependency_names = magic_enum

@@ -1,5 +1,6 @@
 {
   "name": "markdown_format",
+  "class": "MarkdownFormatPlugin",
   "description": "Cross-platform output formatter for Markdown output",
   "platform": "all",
   "deps": []

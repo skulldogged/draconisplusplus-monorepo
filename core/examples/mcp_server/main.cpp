@@ -22,7 +22,10 @@
 #include <utility>
 
 #include <Drac++/Core/System.hpp>
-#include <Drac++/Services/Packages.hpp>
+
+#if DRAC_ENABLE_PACKAGECOUNT
+  #include <Drac++/Services/Packages.hpp>
+#endif
 
 #include <Drac++/Utils/CacheManager.hpp>
 #include <Drac++/Utils/DataTypes.hpp>
@@ -31,7 +34,9 @@
 
 using namespace draconis::utils::types;
 using namespace draconis::core::system;
+#if DRAC_ENABLE_PACKAGECOUNT
 using namespace draconis::services::packages;
+#endif
 using namespace draconis::utils::cache;
 using enum draconis::utils::error::DracErrorCode;
 
