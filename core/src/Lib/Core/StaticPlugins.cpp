@@ -1,6 +1,6 @@
 /**
  * @file StaticPlugins.cpp
- * @brief Static plugin registry implementation for precompiled configuration mode
+ * @brief Static plugin registry implementation for statically linked plugins
  * @author Draconis++ Team
  * @version 1.0.0
  *
@@ -12,7 +12,7 @@
 
 #include <Drac++/Core/StaticPlugins.hpp>
 
-#if DRAC_ENABLE_PLUGINS && DRAC_PRECOMPILED_CONFIG
+#if DRAC_ENABLE_PLUGINS
 
 namespace draconis::core::plugin {
   using namespace utils::types;
@@ -43,4 +43,4 @@ namespace draconis::core::plugin {
   }
 } // namespace draconis::core::plugin
 
-#endif // DRAC_ENABLE_PLUGINS && DRAC_PRECOMPILED_CONFIG
+#endif // DRAC_ENABLE_PLUGINS

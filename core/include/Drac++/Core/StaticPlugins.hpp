@@ -1,12 +1,12 @@
 /**
  * @file StaticPlugins.hpp
- * @brief Static plugin registry for precompiled configuration mode
+ * @brief Static plugin registry for statically linked plugins
  * @author Draconis++ Team
  * @version 1.0.0
  *
- * @details When DRAC_PRECOMPILED_CONFIG is enabled and plugins are specified
- * in the config, they can be statically linked into the binary rather than
- * loaded dynamically at runtime. This provides:
+ * @details When static plugins are enabled via the static_plugins meson option,
+ * plugins can be statically linked into the binary rather than loaded dynamically
+ * at runtime. This provides:
  * - Fully portable single-binary deployment
  * - Faster startup (no dynamic library loading)
  * - Smaller distribution (no separate .dll/.so files needed)
@@ -16,12 +16,12 @@
 
 #pragma once
 
-#if DRAC_ENABLE_PLUGINS && DRAC_PRECOMPILED_CONFIG
+#if DRAC_ENABLE_PLUGINS
 
   #include "../Utils/Types.hpp"
   #include "Plugin.hpp"
 
-#include <cstddef>
+  #include <cstddef>
 
 namespace draconis::core::plugin {
   /**
@@ -80,4 +80,4 @@ namespace draconis::core::plugin {
 
 } // namespace draconis::core::plugin
 
-#endif // DRAC_ENABLE_PLUGINS && DRAC_PRECOMPILED_CONFIG
+#endif // DRAC_ENABLE_PLUGINS

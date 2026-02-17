@@ -9,9 +9,7 @@
   #include <Drac++/Core/Plugin.hpp>
   #include <Drac++/Core/PluginConfig.hpp>
   #include <Drac++/Core/PluginManager.hpp>
-  #if DRAC_PRECOMPILED_CONFIG
-    #include <Drac++/Core/StaticPlugins.hpp>
-  #endif
+  #include <Drac++/Core/StaticPlugins.hpp>
 #endif
 
 #include "Drac++/Utils/DataTypes.hpp"
@@ -501,14 +499,10 @@ extern "C" {
   static size_t s_staticPluginCount = 0;
 
   auto DracInitStaticPlugins_CAPI(void) -> size_t {
-#if DRAC_PRECOMPILED_CONFIG
     std::call_once(s_staticPluginInitFlag, []() {
       s_staticPluginCount = static_cast<size_t>(::draconis::core::plugin::DracInitStaticPlugins());
     });
     return s_staticPluginCount;
-#else
-    return 0;
-#endif
   }
 
   auto DracInitStaticPlugins(void) -> size_t {
@@ -517,7 +511,6 @@ extern "C" {
 
   auto DracInitPluginManager(void) -> void {
 #if DRAC_PRECOMPILED_CONFIG
-    // Static plugin mode doesn't use the dynamic PluginManager
 #else
     auto& mgr = GetPluginManager();
     if (!mgr.isInitialized()) {
@@ -557,21 +550,23 @@ extern "C" {
 
     String name(pluginId);
 
-#if DRAC_PRECOMPILED_CONFIG
-    if (!IsStaticPlugin(name))
-      return nullptr;
+    // First try static plugins
+    if (IsStaticPlugin(name)) {
+      IPlugin* basePlugin = CreateStaticPlugin(name);
+      if (!basePlugin)
+        return nullptr;
 
-    IPlugin* basePlugin = CreateStaticPlugin(name);
-    if (!basePlugin)
-      return nullptr;
+      auto* infoPlugin = dynamic_cast<IInfoProviderPlugin*>(basePlugin);
+      if (!infoPlugin) {
+        DestroyStaticPlugin(name, basePlugin);
+        return nullptr;
+      }
 
-    auto* infoPlugin = dynamic_cast<IInfoProviderPlugin*>(basePlugin);
-    if (!infoPlugin) {
-      DestroyStaticPlugin(name, basePlugin);
-      return nullptr;
+      return new DracPlugin { infoPlugin, std::move(name), true };
     }
 
-    return new DracPlugin { infoPlugin, std::move(name), true };
+#if DRAC_PRECOMPILED_CONFIG
+    return nullptr;
 #else
     auto& mgr = GetPluginManager();
 
@@ -620,14 +615,12 @@ extern "C" {
     if (!plugin)
       return;
 
-#if DRAC_PRECOMPILED_CONFIG
     if (plugin->ownsInstance && plugin->inner) {
       IPlugin* basePlugin = dynamic_cast<IPlugin*>(plugin->inner);
       if (basePlugin) {
         DestroyStaticPlugin(plugin->name, basePlugin);
       }
     }
-#endif
     delete plugin;
   }
 
