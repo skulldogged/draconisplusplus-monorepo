@@ -838,6 +838,7 @@ namespace {
     weather::WeatherData                                m_data;
     Option<String>                                      m_lastError;
     UniquePointer<weather::providers::IWeatherProvider> m_provider;
+    Option<String>                                      m_runtimeConfig;
     bool                                                m_ready = false;
 
 #if DRAC_PRECOMPILED_CONFIG
@@ -1058,25 +1059,53 @@ units = "metric"
       return "weather";
     }
 
+    auto setConfig(StringView tomlConfig) -> Result<Unit> override {
+      if (tomlConfig.empty())
+        return {};
+
+      m_runtimeConfig = String(tomlConfig);
+      debug_log("Weather plugin: received runtime config ({} bytes)", tomlConfig.size());
+      return {};
+    }
+
     auto initialize(const PluginContext& ctx, PluginCache& /*cache*/) -> Result<Unit> override {
       debug_log("Weather plugin initializing...");
       debug_log("Weather plugin config dir: {}", ctx.configDir.string());
 
-      // Load configuration
+      // Load configuration - check runtime config first, then filesystem
 #if DRAC_PRECOMPILED_CONFIG
       // Read config directly from config.hpp - validated at compile time
       m_config = loadConfigFromPrecompiled(draconis::config::WEATHER_CONFIG);
       debug_log("Weather plugin loaded from precompiled config");
 #else
-      // Load from TOML file at runtime
-      auto configResult = loadConfig(ctx.configDir);
-      if (!configResult) {
-        m_lastError = configResult.error().message;
-        warn_log("Weather plugin config error: {}", *m_lastError);
-        m_config.enabled = false;
-      } else {
-        m_config = *configResult;
-        debug_log("Weather plugin config loaded: enabled={}", m_config.enabled);
+      // Check for runtime config passed via setConfig()
+      bool configLoaded = false;
+
+      if (m_runtimeConfig) {
+        debug_log("Weather plugin: parsing runtime config");
+        TomlWeatherConfig tomlCfg;
+        glz::context parseCtx {};
+
+        if (const auto readError = glz::read<glz::opts { .format = glz::TOML, .error_on_unknown_keys = false }>(tomlCfg, *m_runtimeConfig, parseCtx); !readError) {
+          m_config = parseTomlConfig(tomlCfg);
+          configLoaded = true;
+          debug_log("Weather plugin config loaded from runtime: enabled={}", m_config.enabled);
+        } else {
+          warn_log("Failed to parse runtime config: {}", glz::format_error(readError, *m_runtimeConfig));
+        }
+      }
+
+      // Fall back to filesystem if no runtime config or parsing failed
+      if (!configLoaded) {
+        auto configResult = loadConfig(ctx.configDir);
+        if (!configResult) {
+          m_lastError = configResult.error().message;
+          warn_log("Weather plugin config error: {}", *m_lastError);
+          m_config.enabled = false;
+        } else {
+          m_config = *configResult;
+          debug_log("Weather plugin config loaded from filesystem: enabled={}", m_config.enabled);
+        }
       }
 #endif
 

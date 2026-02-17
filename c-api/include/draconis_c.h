@@ -373,6 +373,9 @@ extern "C" {
   // Plugin initialization
   DRAC_C_API DracErrorCode DracPluginInitialize(DracPlugin* plugin, DracCacheManager* cache);
 
+  // Plugin configuration - pass TOML config string to plugin
+  DRAC_C_API DracErrorCode DracPluginSetConfig(DracPlugin* plugin, const char* tomlConfig);
+
   // Plugin state
   DRAC_C_API bool DracPluginIsEnabled(DracPlugin* plugin);
   DRAC_C_API bool DracPluginIsReady(DracPlugin* plugin);

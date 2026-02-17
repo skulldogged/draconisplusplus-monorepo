@@ -233,6 +233,18 @@ namespace draconis::core::plugin {
      */
     virtual auto initialize(const PluginContext& ctx, ::PluginCache& cache) -> utils::types::Result<utils::types::Unit> = 0;
 
+    /**
+     * @brief Set plugin configuration from TOML string
+     * @param tomlConfig TOML configuration string
+     * @return Success or error
+     * @details Allows runtime configuration without filesystem access.
+     *          Plugins should parse this during initialize() or before collectData().
+     */
+    virtual auto setConfig(utils::types::StringView tomlConfig) -> utils::types::Result<utils::types::Unit> {
+      (void)tomlConfig;
+      return {};
+    }
+
     virtual auto shutdown() -> utils::types::Unit = 0;
 
     [[nodiscard]] virtual auto isReady() const -> bool = 0;

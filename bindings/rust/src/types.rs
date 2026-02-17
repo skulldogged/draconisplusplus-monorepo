@@ -748,6 +748,33 @@ impl Plugin {
     }
   }
 
+  /// Set plugin configuration from a TOML string.
+  /// Must be called before `initialize()` for the config to take effect.
+  ///
+  /// # Example
+  /// ```ignore
+  /// let toml_config = r#"
+  /// enabled = true
+  /// provider = "openmeteo"
+  /// units = "metric"
+  /// [coords]
+  /// lat = 40.7128
+  /// lon = -74.0060
+  /// "#;
+  /// plugin.set_config(toml_config)?;
+  /// plugin.initialize(&mut cache)?;
+  /// ```
+  pub fn set_config(&mut self, toml_config: &str) -> Result<()> {
+    let c_config = std::ffi::CString::new(toml_config).map_err(|_| ErrorCode::InvalidArgument)?;
+    let result = unsafe { sys::DracPluginSetConfig(self.handle, c_config.as_ptr()) };
+
+    if result == DRAC_SUCCESS {
+      Ok(())
+    } else {
+      Err(ErrorCode::from(result))
+    }
+  }
+
   pub fn is_enabled(&self) -> bool {
     unsafe { sys::DracPluginIsEnabled(self.handle) }
   }

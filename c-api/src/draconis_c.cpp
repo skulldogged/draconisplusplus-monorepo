@@ -638,6 +638,21 @@ extern "C" {
     return TO_C_ERROR(result.error());
   }
 
+  auto DracPluginSetConfig(DracPlugin* plugin, const char* tomlConfig) -> DracErrorCode {
+    if (!plugin || !plugin->inner)
+      return DRAC_ERROR_INVALID_ARGUMENT;
+
+    if (!tomlConfig)
+      return DRAC_SUCCESS;
+
+    Result<Unit> result = plugin->inner->setConfig(StringView(tomlConfig));
+
+    if (result.has_value())
+      return DRAC_SUCCESS;
+
+    return TO_C_ERROR(result.error());
+  }
+
   auto DracPluginIsEnabled(DracPlugin* plugin) -> bool {
     if (!plugin || !plugin->inner)
       return false;
@@ -769,6 +784,10 @@ extern "C" {
   auto DracUnloadPlugin(DracPlugin*) -> void {}
 
   auto DracPluginInitialize(DracPlugin*, DracCacheManager*) -> DracErrorCode {
+    return DRAC_ERROR_NOT_SUPPORTED;
+  }
+
+  auto DracPluginSetConfig(DracPlugin*, const char*) -> DracErrorCode {
     return DRAC_ERROR_NOT_SUPPORTED;
   }
 

@@ -688,9 +688,28 @@ namespace {
       return "now_playing";
     }
 
+    auto setConfig(StringView tomlConfig) -> Result<Unit> override {
+      if (tomlConfig.empty())
+        return {};
+
+      // Parse TOML config for now_playing
+      // Currently only 'enabled' field is supported
+      // Example: enabled = true
+      String configStr(tomlConfig);
+
+      // Simple parsing - look for enabled = true/false
+      if (configStr.find("enabled = false") != String::npos || configStr.find("enabled=false") != String::npos)
+        m_config.enabled = false;
+      else if (configStr.find("enabled = true") != String::npos || configStr.find("enabled=true") != String::npos)
+        m_config.enabled = true;
+
+      debug_log("Now Playing plugin: received runtime config, enabled={}", m_config.enabled);
+      return {};
+    }
+
     auto initialize(const PluginContext& /*ctx*/, PluginCache& /*cache*/) -> Result<Unit> override {
-      m_config.enabled = true;
-      m_ready          = true;
+      // Config already set via setConfig() or defaults to enabled=true
+      m_ready = true;
       return {};
     }
 
