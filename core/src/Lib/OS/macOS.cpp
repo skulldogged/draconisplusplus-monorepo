@@ -5,16 +5,17 @@
   #include <CoreGraphics/CGDirectDisplay.h>  // CGDisplayCopyDeviceDescription, CGDisplayCopyDisplayMode, CGDisplayIsMain, CGDisplayModeGetMaximumRefreshRate, CGDisplayModeGetRefreshRate, CGDisplayPixelsHigh, CGDisplayPixelsWide, CGDisplayRef, CGDisplayModeRef, CGDirectDisplayID
   #include <IOKit/ps/IOPSKeys.h>             // kIOPSCurrentCapacityKey, kIOPSInternalBatteryType, kIOPSIsChargingKey, kIOPSTimeToEmptyKey, kIOPSTypeKey
   #include <IOKit/ps/IOPowerSources.h>       // IOPSCopyPowerSourcesInfo, IOPSGetPowerSourceDescription
-  #include <map>                             // std::map
   #include <ifaddrs.h>                       // freeifaddrs, getifaddrs, ifaddrs, sockaddr
   #include <mach/mach_host.h>                // host_statistics64
   #include <mach/mach_init.h>                // host_page_size, mach_host_self
   #include <mach/vm_statistics.h>            // vm_statistics64_data_t
+  #include <map>                             // std::map
   #include <net/if.h>                        // IFF_LOOPBACK, IFF_UP, IF_NAMESIZE, if_indextoname
   #include <net/if_dl.h>                     // LLADDR, sockaddr_dl
   #include <net/route.h>                     // RTA_DST, RTF_GATEWAY, rt_msghdr
   #include <netdb.h>                         // NI_MAXHOST, NI_NUMERICHOST, getnameinfo
   #include <netinet/in.h>                    // sockaddr_in
+  #include <sys/mount.h>                     // getmntinfo, statfs, MNT_LOCAL, MNT_NOWAIT
   #include <sys/sysctl.h>                    // {CTL_KERN, KERN_PROC, KERN_PROC_ALL, kinfo_proc, sysctl, sysctlbyname}
 
   #include <Drac++/Core/System.hpp>
@@ -398,6 +399,87 @@ namespace draconis::core::system {
 
   auto GetDiskUsage(CacheManager& /*cache*/) -> Result<ResourceUsage> {
     return os::unix_shared::GetRootDiskUsage();
+  }
+
+  auto GetDisks(CacheManager& /*cache*/) -> Result<Vec<DiskInfo>> {
+    struct statfs* mounts = nullptr;
+
+    const i32 count = getmntinfo(&mounts, MNT_NOWAIT);
+
+    if (count == 0 || mounts == nullptr)
+      ERR(IoError, "getmntinfo() failed: could not enumerate mounted filesystems");
+
+    Vec<DiskInfo> disks;
+
+    for (i32 i = 0; i < count; ++i) {
+      const struct statfs& fs = mounts[i]; // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+
+      // Skip pseudo-filesystems (devfs, autofs, etc.)
+      if ((fs.f_flags & MNT_LOCAL) == 0 && std::strcmp(fs.f_fstypename, "nfs") != 0)
+        continue;
+
+      const u64 totalBytes = static_cast<u64>(fs.f_blocks) * static_cast<u64>(fs.f_bsize);
+      const u64 freeBytes  = static_cast<u64>(fs.f_bfree) * static_cast<u64>(fs.f_bsize);
+
+      // Skip filesystems with zero size (virtual filesystems)
+      if (totalBytes == 0)
+        continue;
+
+      disks.push_back(DiskInfo {
+        .name          = String(fs.f_mntfromname),
+        .mountPoint    = String(fs.f_mntonname),
+        .filesystem    = String(fs.f_fstypename),
+        .driveType     = String((fs.f_flags & MNT_LOCAL) != 0 ? "Local" : "Network"),
+        .totalBytes    = totalBytes,
+        .usedBytes     = totalBytes - freeBytes,
+        .isSystemDrive = (std::strcmp(fs.f_mntonname, "/") == 0),
+      });
+    }
+
+    return disks;
+  }
+
+  auto GetSystemDisk(CacheManager& /*cache*/) -> Result<DiskInfo> {
+    struct statfs fs;
+
+    if (statfs("/", &fs) == -1)
+      ERR_FMT(IoError, "statfs('/') failed: {} (errno {})", std::strerror(errno), errno);
+
+    const u64 totalBytes = static_cast<u64>(fs.f_blocks) * static_cast<u64>(fs.f_bsize);
+    const u64 freeBytes  = static_cast<u64>(fs.f_bfree) * static_cast<u64>(fs.f_bsize);
+
+    return DiskInfo {
+      .name          = String(fs.f_mntfromname),
+      .mountPoint    = String("/"),
+      .filesystem    = String(fs.f_fstypename),
+      .driveType     = String((fs.f_flags & MNT_LOCAL) != 0 ? "Local" : "Network"),
+      .totalBytes    = totalBytes,
+      .usedBytes     = totalBytes - freeBytes,
+      .isSystemDrive = true,
+    };
+  }
+
+  auto GetDiskByPath(const String& path, CacheManager& /*cache*/) -> Result<DiskInfo> {
+    if (path.empty())
+      ERR(InvalidArgument, "Path cannot be empty");
+
+    struct statfs fs;
+
+    if (statfs(path.c_str(), &fs) == -1)
+      ERR_FMT(IoError, "statfs('{}') failed: {} (errno {})", path, std::strerror(errno), errno);
+
+    const u64 totalBytes = static_cast<u64>(fs.f_blocks) * static_cast<u64>(fs.f_bsize);
+    const u64 freeBytes  = static_cast<u64>(fs.f_bfree) * static_cast<u64>(fs.f_bsize);
+
+    return DiskInfo {
+      .name          = String(fs.f_mntfromname),
+      .mountPoint    = String(fs.f_mntonname),
+      .filesystem    = String(fs.f_fstypename),
+      .driveType     = String((fs.f_flags & MNT_LOCAL) != 0 ? "Local" : "Network"),
+      .totalBytes    = totalBytes,
+      .usedBytes     = totalBytes - freeBytes,
+      .isSystemDrive = (std::strcmp(fs.f_mntonname, "/") == 0),
+    };
   }
 
   auto GetShell(CacheManager& cache) -> Result<String> {

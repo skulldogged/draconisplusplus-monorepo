@@ -1,8 +1,10 @@
 #if defined(__FreeBSD__) || defined(__DragonFly__) || defined(__NetBSD__)
 
 // clang-format off
-#include <cstring>              // std::strlen
+#include <cerrno>               // errno
+#include <cstring>              // std::strlen, std::strcmp, std::strerror
 #include <fstream>              // ifstream
+#include <sys/mount.h>          // getmntinfo, statfs, MNT_LOCAL, MNT_NOWAIT
 #include <sys/socket.h>         // ucred, getsockopt, SOL_SOCKET, SO_PEERCRED
 #include <sys/sysctl.h>         // sysctlbyname
 #include <sys/un.h>             // LOCAL_PEERCRED
@@ -361,6 +363,86 @@ namespace draconis::core::system {
 
   auto GetDiskUsage(CacheManager& /*cache*/) -> Result<ResourceUsage> {
     return os::unix_shared::GetRootDiskUsage();
+  }
+
+  auto GetDisks(CacheManager& /*cache*/) -> Result<Vec<DiskInfo>> {
+    struct statfs* mounts = nullptr;
+
+    const i32 count = getmntinfo(&mounts, MNT_NOWAIT);
+
+    if (count == 0 || mounts == nullptr)
+      ERR(IoError, "getmntinfo() failed: could not enumerate mounted filesystems");
+
+    Vec<DiskInfo> disks;
+
+    for (i32 i = 0; i < count; ++i) {
+      const struct statfs& fs = mounts[i]; // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+
+      // Skip pseudo-filesystems
+      if ((fs.f_flags & MNT_LOCAL) == 0)
+        continue;
+
+      const u64 totalBytes = static_cast<u64>(fs.f_blocks) * static_cast<u64>(fs.f_bsize);
+      const u64 freeBytes  = static_cast<u64>(fs.f_bfree) * static_cast<u64>(fs.f_bsize);
+
+      if (totalBytes == 0)
+        continue;
+
+      disks.push_back(DiskInfo {
+        .name          = String(fs.f_mntfromname),
+        .mountPoint    = String(fs.f_mntonname),
+        .filesystem    = String(fs.f_fstypename),
+        .driveType     = String("Local"),
+        .totalBytes    = totalBytes,
+        .usedBytes     = totalBytes - freeBytes,
+        .isSystemDrive = (std::strcmp(fs.f_mntonname, "/") == 0),
+      });
+    }
+
+    return disks;
+  }
+
+  auto GetSystemDisk(CacheManager& /*cache*/) -> Result<DiskInfo> {
+    struct statfs fs;
+
+    if (statfs("/", &fs) == -1)
+      ERR_FMT(IoError, "statfs('/') failed: {} (errno {})", std::strerror(errno), errno);
+
+    const u64 totalBytes = static_cast<u64>(fs.f_blocks) * static_cast<u64>(fs.f_bsize);
+    const u64 freeBytes  = static_cast<u64>(fs.f_bfree) * static_cast<u64>(fs.f_bsize);
+
+    return DiskInfo {
+      .name          = String(fs.f_mntfromname),
+      .mountPoint    = String("/"),
+      .filesystem    = String(fs.f_fstypename),
+      .driveType     = String("Local"),
+      .totalBytes    = totalBytes,
+      .usedBytes     = totalBytes - freeBytes,
+      .isSystemDrive = true,
+    };
+  }
+
+  auto GetDiskByPath(const String& path, CacheManager& /*cache*/) -> Result<DiskInfo> {
+    if (path.empty())
+      ERR(InvalidArgument, "Path cannot be empty");
+
+    struct statfs fs;
+
+    if (statfs(path.c_str(), &fs) == -1)
+      ERR_FMT(IoError, "statfs('{}') failed: {} (errno {})", path, std::strerror(errno), errno);
+
+    const u64 totalBytes = static_cast<u64>(fs.f_blocks) * static_cast<u64>(fs.f_bsize);
+    const u64 freeBytes  = static_cast<u64>(fs.f_bfree) * static_cast<u64>(fs.f_bsize);
+
+    return DiskInfo {
+      .name          = String(fs.f_mntfromname),
+      .mountPoint    = String(fs.f_mntonname),
+      .filesystem    = String(fs.f_fstypename),
+      .driveType     = String("Local"),
+      .totalBytes    = totalBytes,
+      .usedBytes     = totalBytes - freeBytes,
+      .isSystemDrive = (std::strcmp(fs.f_mntonname, "/") == 0),
+    };
   }
 } // namespace draconis::core::system
 

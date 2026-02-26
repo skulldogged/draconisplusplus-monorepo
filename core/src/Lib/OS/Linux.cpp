@@ -17,6 +17,7 @@
   #include <linux/limits.h>       // PATH_MAX
   #include <map>                  // std::map
   #include <matchit.hpp>          // matchit::{is, is_not, is_any, etc.}
+  #include <mntent.h>             // setmntent, getmntent, endmntent
   #include <net/if.h>             // IFF_UP, IFF_LOOPBACK
   #include <netdb.h>              // getnameinfo, NI_NUMERICHOST
   #include <netinet/in.h>         // sockaddr_in
@@ -992,6 +993,57 @@ namespace draconis::core::system {
 
   auto GetDiskUsage(CacheManager& /*cache*/) -> Result<ResourceUsage> {
     return os::unix_shared::GetRootDiskUsage();
+  }
+
+  auto GetDisks(CacheManager& /*cache*/) -> Result<Vec<DiskInfo>> {
+    FILE* mtab = setmntent("/proc/mounts", "r");
+    if (mtab == nullptr)
+      ERR(IoError, "setmntent(\"/proc/mounts\") failed: could not open mount table");
+
+    Vec<DiskInfo> disks;
+
+    // NOLINTBEGIN(concurrency-mt-unsafe) — getmntent is MT-unsafe but we don't call it from multiple threads
+    while (const struct mntent* entry = getmntent(mtab)) {
+      // Skip virtual filesystems — real block devices start with '/'
+      if (entry->mnt_fsname[0] != '/')
+        continue;
+
+      struct statvfs stat;
+      if (statvfs(entry->mnt_dir, &stat) == -1)
+        continue;
+
+      const u64 totalBytes = static_cast<u64>(stat.f_blocks) * static_cast<u64>(stat.f_frsize);
+      const u64 freeBytes  = static_cast<u64>(stat.f_bfree) * static_cast<u64>(stat.f_frsize);
+
+      if (totalBytes == 0)
+        continue;
+
+      disks.push_back(DiskInfo {
+        .name          = String(entry->mnt_fsname),
+        .mountPoint    = String(entry->mnt_dir),
+        .filesystem    = String(entry->mnt_type),
+        .driveType     = String("Local"),
+        .totalBytes    = totalBytes,
+        .usedBytes     = totalBytes - freeBytes,
+        .isSystemDrive = (std::strcmp(entry->mnt_dir, "/") == 0),
+      });
+    }
+    // NOLINTEND(concurrency-mt-unsafe)
+
+    endmntent(mtab);
+
+    return disks;
+  }
+
+  auto GetSystemDisk(CacheManager& /*cache*/) -> Result<DiskInfo> {
+    return os::unix_shared::GetDiskInfoAt("/");
+  }
+
+  auto GetDiskByPath(const String& path, CacheManager& /*cache*/) -> Result<DiskInfo> {
+    if (path.empty())
+      ERR(InvalidArgument, "Path cannot be empty");
+
+    return os::unix_shared::GetDiskInfoAt(path.c_str());
   }
 
   auto GetOutputs(CacheManager& /*cache*/) -> Result<Vec<DisplayInfo>> {

@@ -140,6 +140,29 @@ namespace draconis::core::system {
     // Haiku uses /boot as the primary filesystem
     return os::unix_shared::GetDiskUsageAt("/boot");
   }
+
+  auto GetDisks(CacheManager& /*cache*/) -> Result<Vec<DiskInfo>> {
+    // Haiku uses /boot as its primary filesystem
+    Result<DiskInfo> bootDisk = os::unix_shared::GetDiskInfoAt("/boot", "boot");
+
+    if (!bootDisk)
+      ERR(IoError, "Failed to get disk info for /boot");
+
+    Vec<DiskInfo> disks;
+    disks.push_back(std::move(*bootDisk));
+    return disks;
+  }
+
+  auto GetSystemDisk(CacheManager& /*cache*/) -> Result<DiskInfo> {
+    return os::unix_shared::GetDiskInfoAt("/boot", "boot");
+  }
+
+  auto GetDiskByPath(const String& path, CacheManager& /*cache*/) -> Result<DiskInfo> {
+    if (path.empty())
+      ERR(InvalidArgument, "Path cannot be empty");
+
+    return os::unix_shared::GetDiskInfoAt(path.c_str());
+  }
 } // namespace draconis::core::system
 
 #endif // __HAIKU__

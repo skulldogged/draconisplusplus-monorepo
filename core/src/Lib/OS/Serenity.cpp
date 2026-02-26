@@ -169,6 +169,28 @@ namespace draconis::core::system {
   auto GetDiskUsage(CacheManager& /*cache*/) -> Result<ResourceUsage> {
     return os::unix_shared::GetRootDiskUsage();
   }
+
+  auto GetDisks(CacheManager& /*cache*/) -> Result<Vec<DiskInfo>> {
+    Result<DiskInfo> rootDisk = os::unix_shared::GetDiskInfoAt("/");
+
+    if (!rootDisk)
+      ERR(IoError, "Failed to get disk info for /");
+
+    Vec<DiskInfo> disks;
+    disks.push_back(std::move(*rootDisk));
+    return disks;
+  }
+
+  auto GetSystemDisk(CacheManager& /*cache*/) -> Result<DiskInfo> {
+    return os::unix_shared::GetDiskInfoAt("/");
+  }
+
+  auto GetDiskByPath(const String& path, CacheManager& /*cache*/) -> Result<DiskInfo> {
+    if (path.empty())
+      ERR(InvalidArgument, "Path cannot be empty");
+
+    return os::unix_shared::GetDiskInfoAt(path.c_str());
+  }
 } // namespace draconis::core::system
 
 #endif // __serenity__
