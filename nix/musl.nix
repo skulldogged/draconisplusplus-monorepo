@@ -72,8 +72,8 @@
   deps = with pkgs.pkgsStatic; [
     curlMinimal
     (dbus.override {
-      libaudit = null;
-      apparmor = null;
+      audit = null;
+      libapparmor = null;
     })
     glaze
     llvmPackages_20.libcxx

@@ -22,6 +22,7 @@ option('precompiled_config', type: 'boolean', value: false, description: 'Use pr
 option('xcb', type: 'feature', value: 'auto', description: 'Enable XCB support')
 option('wayland', type: 'feature', value: 'auto', description: 'Enable Wayland support')
 option('pugixml', type: 'feature', value: 'auto', description: 'Enable pugixml support')
+option('build_for_musl', type: 'boolean', value: false, description: 'Build for musl libc (primarily for Nix)')
 
 # Binding options
 option('build_rust', type: 'boolean', value: false, description: 'Build Rust bindings')
