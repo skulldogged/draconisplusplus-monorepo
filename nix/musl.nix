@@ -72,12 +72,12 @@
   deps = with pkgs.pkgsStatic; [
     curlMinimal
     (dbus.overrideAttrs (old: {
-      mesonFlags = (builtins.filter (f:
-        !builtins.elem f [
-          "-Dlibaudit=enabled"
-          "-Dapparmor=enabled"
-        ]
-      ) (old.mesonFlags or [])) ++ [
+      buildInputs = builtins.filter (p:
+        (p.pname or "") != "audit" && (p.pname or "") != "libapparmor"
+      ) (old.buildInputs or []);
+      mesonFlags = builtins.filter (f:
+        !(pkgs.lib.hasPrefix "-Dlibaudit" f) && !(pkgs.lib.hasPrefix "-Dapparmor" f)
+      ) (old.mesonFlags or []) ++ [
         "-Dlibaudit=disabled"
         "-Dapparmor=disabled"
       ];
