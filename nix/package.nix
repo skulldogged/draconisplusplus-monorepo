@@ -19,7 +19,7 @@
 
   boostUt = pkgs.callPackage ./boost-ut.nix {};
 
-  deps = with pkgs
+  deps = with pkgs;
     [
       (glaze.overrideAttrs rec {
         version = "6.1.0";
