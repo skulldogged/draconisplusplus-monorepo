@@ -71,7 +71,10 @@
 
   deps = with pkgs.pkgsStatic; [
     curlMinimal
-    dbus
+    (dbus.override {
+      libaudit = null;
+      apparmor = null;
+    })
     glaze
     llvmPackages_20.libcxx
     mimalloc
