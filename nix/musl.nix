@@ -71,10 +71,14 @@
 
   deps = with pkgs.pkgsStatic; [
     curlMinimal
-    (dbus.overrideAttrs (old: {
-      buildInputs = builtins.filter (p:
-        (p.pname or "") != "audit" && (p.pname or "") != "libapparmor"
-      ) (old.buildInputs or []);
+    (dbus.overrideAttrs (old: let
+      filterAuditApparmor = builtins.filter (p:
+        let name = p.pname or ""; in
+        name != "audit" && name != "libapparmor"
+      );
+    in {
+      buildInputs = filterAuditApparmor (old.buildInputs or []);
+      propagatedBuildInputs = filterAuditApparmor (old.propagatedBuildInputs or []);
       mesonFlags = builtins.filter (f:
         !(pkgs.lib.hasPrefix "-Dlibaudit" f) && !(pkgs.lib.hasPrefix "-Dapparmor" f)
       ) (old.mesonFlags or []) ++ [
