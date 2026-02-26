@@ -71,10 +71,17 @@
 
   deps = with pkgs.pkgsStatic; [
     curlMinimal
-    (dbus.override {
-      audit = null;
-      libapparmor = null;
-    })
+    (dbus.overrideAttrs (old: {
+      mesonFlags = (builtins.filter (f:
+        !builtins.elem f [
+          "-Dlibaudit=enabled"
+          "-Dapparmor=enabled"
+        ]
+      ) (old.mesonFlags or [])) ++ [
+        "-Dlibaudit=disabled"
+        "-Dapparmor=disabled"
+      ];
+    }))
     glaze
     llvmPackages_20.libcxx
     mimalloc
