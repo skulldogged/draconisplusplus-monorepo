@@ -91,7 +91,21 @@
         linuxPkgs = lib.optionals stdenv.isLinux (with pkgs;
           [valgrind]
           ++ (with pkgsStatic; [
-            dbus
+            (dbus.overrideAttrs (old: let
+              filterAuditApparmor = builtins.filter (p:
+                let name = p.pname or ""; in
+                name != "audit" && name != "libapparmor"
+              );
+            in {
+              buildInputs = filterAuditApparmor (old.buildInputs or []);
+              propagatedBuildInputs = filterAuditApparmor (old.propagatedBuildInputs or []);
+              mesonFlags = builtins.filter (f:
+                !(lib.hasPrefix "-Dlibaudit" f) && !(lib.hasPrefix "-Dapparmor" f)
+              ) (old.mesonFlags or []) ++ [
+                "-Dlibaudit=disabled"
+                "-Dapparmor=disabled"
+              ];
+            }))
             pugixml
             xorg.libxcb
             wayland
