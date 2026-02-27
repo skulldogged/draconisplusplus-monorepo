@@ -85,6 +85,12 @@
         "-Dlibaudit=disabled"
         "-Dapparmor=disabled"
       ];
+      configureFlags = builtins.filter (f:
+        !(pkgs.lib.hasPrefix "--enable-apparmor" f) && !(pkgs.lib.hasPrefix "--enable-libaudit" f)
+      ) (old.configureFlags or []) ++ [
+        "--disable-apparmor"
+        "--disable-libaudit"
+      ];
     }))
     glaze
     llvmPackages_20.libcxx

@@ -72,6 +72,12 @@
           "-Dlibaudit=disabled"
           "-Dapparmor=disabled"
         ];
+        configureFlags = builtins.filter (f:
+          !(lib.hasPrefix "--enable-apparmor" f) && !(lib.hasPrefix "--enable-libaudit" f)
+        ) (old.configureFlags or []) ++ [
+          "--disable-apparmor"
+          "--disable-libaudit"
+        ];
       }))
       pugixml
       xorg.libxcb
