@@ -14,6 +14,7 @@ test_env = executable(
   'test_env',
   'test_env.cpp',
   dependencies: test_deps,
+  link_args: pci_ids_link_args,
 )
 test('Environment Utils', test_env)
 
@@ -22,6 +23,7 @@ test_types = executable(
   'test_types',
   'test_types.cpp',
   dependencies: test_deps,
+  link_args: pci_ids_link_args,
 )
 test('Types', test_types)
 
@@ -30,6 +32,7 @@ test_error = executable(
   'test_error',
   'test_error.cpp',
   dependencies: test_deps,
+  link_args: pci_ids_link_args,
 )
 test('Error Handling', test_error)
 
@@ -38,6 +41,7 @@ test_localization = executable(
   'test_localization',
   'test_localization.cpp',
   dependencies: test_deps,
+  link_args: pci_ids_link_args,
 )
 test('Localization', test_localization)
 
@@ -46,5 +50,6 @@ test_argparser = executable(
   'test_argparser',
   'test_argparser.cpp',
   dependencies: test_deps,
+  link_args: pci_ids_link_args,
 )
 test('Argument Parser', test_argparser)

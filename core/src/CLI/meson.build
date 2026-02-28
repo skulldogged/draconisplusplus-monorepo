@@ -42,7 +42,7 @@ dracpp_exe = executable(
   'draconis++',
   main_app_sources,
   dependencies: [draconis_dep_whole] + lib_deps,
-  link_args: link_args,
+  link_args: link_args + pci_ids_link_args,
   objc_args: objc_args,
   install: true,
 )

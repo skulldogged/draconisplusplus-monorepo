@@ -12,7 +12,7 @@ executable(
   'glaze_http',
   'glaze_http/main.cpp',
   dependencies: [draconis_dep] + lib_deps,
-  link_args: link_args,
+  link_args: link_args + pci_ids_link_args,
   install: false,
 )
 
@@ -20,6 +20,6 @@ executable(
   'mcp_server',
   'mcp_server/main.cpp',
   dependencies: [draconis_dep] + lib_deps,
-  link_args: link_args,
+  link_args: link_args + pci_ids_link_args,
   install: true,
 )

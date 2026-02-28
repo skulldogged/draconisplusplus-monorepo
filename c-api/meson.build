@@ -23,6 +23,7 @@ install_headers('include/draconis_c.h', subdir: 'draconis')
 demo_c_exe = executable('demo_c',
   'examples/demo.c',
   dependencies: draconis_c_dep,
+  link_args: pci_ids_link_args,
   install: false,
 )
 

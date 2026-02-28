@@ -226,11 +226,11 @@ elif get_option('plugins').enabled()
   lib_all_sources += lib_sources['plugins']
 endif
 
-# Link arguments
-link_args = []
+# Link arguments for pci_ids (only applied at final executable level, not on dependencies)
+pci_ids_link_args = []
 
 if get_option('use_linked_pci_ids') == true
-  link_args += meson.project_source_root() / 'pci_ids.o'
+  pci_ids_link_args += meson.project_source_root() / 'pci_ids.o'
 endif
 
 # ----------------- #
@@ -246,10 +246,11 @@ libdrac = static_library(
 
 # Standard dependency (for most targets)
 # Includes lib_deps so consumers get all transitive dependencies automatically
+# NOTE: pci_ids.o is NOT included here to avoid duplication through dependency chains.
+# Executables that need it should add pci_ids_link_args to their own link_args.
 draconis_dep = declare_dependency(
   link_with : libdrac,
   dependencies : [includes_dep] + lib_deps,
-  link_args : link_args,
   compile_args : static_plugin_cpp_args,
 )
 
@@ -258,7 +259,6 @@ if static_plugins.length() > 0
   draconis_dep_whole = declare_dependency(
     link_whole : libdrac,
     dependencies : [includes_dep] + lib_deps,
-    link_args : link_args,
     compile_args : static_plugin_cpp_args,
   )
 else
