@@ -132,8 +132,6 @@
           chmod +w pci.ids
           objcopy -I binary -O default pci.ids pci_ids.o
           rm pci.ids
-
-          export LDFLAGS="$LDFLAGS $PWD/pci_ids.o"
         ''
         + ''
           meson compile -C build
