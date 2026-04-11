@@ -1131,7 +1131,7 @@ namespace draconis::ui {
       return Pair<String, Option<String>> { std::move(pluginId), Option<String>(std::move(field)) };
     }
 
-    auto BuildDefaultLayout(const SystemInfo& data) -> Vec<UILayoutGroup> {
+    auto BuildDefaultLayout([[maybe_unused]] const SystemInfo& data) -> Vec<UILayoutGroup> {
       Vec<UILayoutGroup> layout;
 
       UILayoutGroup introGroup;

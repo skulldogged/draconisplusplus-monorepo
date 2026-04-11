@@ -2,7 +2,7 @@
 
 #include "../include/draconis_c.h"
 
-int main() {
+int main(void) {
   DracCacheManager* mgr = DracCreateCacheManager();
 
   if (!mgr) {
@@ -13,13 +13,13 @@ int main() {
   printf("=== System Information ===\n\n");
 
   uint64_t uptime = DracGetUptime();
-  printf("Uptime: %llu seconds\n", uptime);
+  printf("Uptime: %lu seconds\n", uptime);
 
   DracResourceUsage memInfo;
 
   if (DracGetMemInfo(mgr, &memInfo) == DRAC_SUCCESS) {
     printf(
-      "Memory: %llu / %llu bytes used\n",
+      "Memory: %lu / %lu bytes used\n",
       memInfo.usedBytes,
       memInfo.totalBytes
     );
@@ -117,7 +117,7 @@ int main() {
 
   if (DracGetDiskUsage(mgr, &diskUsage) == DRAC_SUCCESS) {
     printf(
-      "Total Disk Usage: %llu / %llu bytes\n",
+      "Total Disk Usage: %lu / %lu bytes\n",
       diskUsage.usedBytes,
       diskUsage.totalBytes
     );
@@ -129,7 +129,7 @@ int main() {
 
   if (DracGetSystemDisk(mgr, &sysDisk) == DRAC_SUCCESS) {
     printf(
-      "System Disk: %s (%s) at %s - %llu / %llu bytes\n",
+      "System Disk: %s (%s) at %s - %lu / %lu bytes\n",
       sysDisk.name,
       sysDisk.filesystem,
       sysDisk.mountPoint,
@@ -150,7 +150,7 @@ int main() {
       DracDiskInfo* disk = &disks.items[i];
 
       printf(
-        "  - %s (%s) at %s: %llu / %llu bytes%s\n",
+        "  - %s (%s) at %s: %lu / %lu bytes%s\n",
         disk->name,
         disk->filesystem,
         disk->mountPoint,
@@ -170,7 +170,7 @@ int main() {
 
   if (DracGetPrimaryOutput(mgr, &primaryDisplay) == DRAC_SUCCESS) {
     printf(
-      "Primary Display: %llux%llu @ %.2f Hz\n",
+      "Primary Display: %lux%lu @ %.2f Hz\n",
       primaryDisplay.width,
       primaryDisplay.height,
       primaryDisplay.refreshRate
@@ -188,7 +188,7 @@ int main() {
       DracDisplayInfo* display = &displays.items[i];
 
       printf(
-        "  - Display %llu: %llux%llu @ %.2f Hz%s\n",
+        "  - Display %lu: %lux%lu @ %.2f Hz%s\n",
         display->id,
         display->width,
         display->height,
@@ -262,7 +262,7 @@ int main() {
       printf("Battery Percentage: %u%%\n", battery.percentage);
 
     if (battery.timeRemainingSecs >= 0)
-      printf("Time Remaining: %lld seconds\n", battery.timeRemainingSecs);
+      printf("Time Remaining: %ld seconds\n", battery.timeRemainingSecs);
   } else {
     printf("Battery: N/A\n");
   }

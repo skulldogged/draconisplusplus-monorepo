@@ -1,7 +1,6 @@
 #include "../include/draconis_c.h"
 
 #include <cstring>
-#include <mutex>
 
 #include <Drac++/Core/System.hpp>
 
@@ -180,7 +179,7 @@ extern "C" {
     if (!mgr || !out_info)
       return DRAC_ERROR_INVALID_ARGUMENT;
 
-    *out_info = { nullptr, nullptr, nullptr };
+    *out_info = { .name = nullptr, .version = nullptr, .id = nullptr };
 
     Result<OSInfo> result = GetOperatingSystem(mgr->inner);
 
@@ -313,7 +312,7 @@ extern "C" {
     if (!mgr || !out_list)
       return DRAC_ERROR_INVALID_ARGUMENT;
 
-    *out_list = { nullptr, 0 };
+    *out_list = { .items = nullptr, .count = 0 };
 
     Result<Vec<DiskInfo>> result = GetDisks(mgr->inner);
 
@@ -346,7 +345,15 @@ extern "C" {
     if (!mgr || !out_info)
       return DRAC_ERROR_INVALID_ARGUMENT;
 
-    *out_info = { nullptr, nullptr, nullptr, nullptr, 0, 0, false };
+    *out_info = {
+      .name          = nullptr,
+      .mountPoint    = nullptr,
+      .filesystem    = nullptr,
+      .driveType     = nullptr,
+      .totalBytes    = 0,
+      .usedBytes     = 0,
+      .isSystemDrive = false,
+    };
 
     Result<DiskInfo> result = GetSystemDisk(mgr->inner);
 
@@ -484,10 +491,6 @@ extern "C" {
     return TO_C_ERROR(result.error());
   }
 
-  // ============================== //
-  //  Plugin System                 //
-  // ============================== //
-
 #if DRAC_ENABLE_PLUGINS
   struct DracPlugin {
     IInfoProviderPlugin* inner;
@@ -496,7 +499,7 @@ extern "C" {
   };
 
   static std::once_flag s_staticPluginInitFlag;
-  static size_t s_staticPluginCount = 0;
+  static size_t         s_staticPluginCount = 0;
 
   auto DracInitStaticPlugins_CAPI(void) -> size_t {
     std::call_once(s_staticPluginInitFlag, []() {
@@ -510,32 +513,32 @@ extern "C" {
   }
 
   auto DracInitPluginManager(void) -> void {
-#if DRAC_PRECOMPILED_CONFIG
-#else
+  #if DRAC_PRECOMPILED_CONFIG
+  #else
     auto& mgr = GetPluginManager();
     if (!mgr.isInitialized()) {
       PluginConfig config;
       (void)mgr.initialize(config);
     }
-#endif
+  #endif
   }
 
   auto DracShutdownPluginManager(void) -> void {
-#if DRAC_PRECOMPILED_CONFIG
-    // Static plugin mode doesn't use the dynamic PluginManager
-#else
+  #if DRAC_PRECOMPILED_CONFIG
+      // Static plugin mode doesn't use the dynamic PluginManager
+  #else
     GetPluginManager().shutdown();
-#endif
+  #endif
   }
 
   auto DracAddPluginSearchPath(const char* path) -> void {
     if (!path)
       return;
-#if DRAC_PRECOMPILED_CONFIG
-    // Static plugins don't use search paths
-#else
+  #if DRAC_PRECOMPILED_CONFIG
+      // Static plugins don't use search paths
+  #else
     GetPluginManager().addSearchPath(std::filesystem::path(path));
-#endif
+  #endif
   }
 
   auto DracDiscoverPlugins(void) -> DracPluginInfoList {
@@ -565,13 +568,13 @@ extern "C" {
       return new DracPlugin { infoPlugin, std::move(name), true };
     }
 
-#if DRAC_PRECOMPILED_CONFIG
+  #if DRAC_PRECOMPILED_CONFIG
     return nullptr;
-#else
+  #else
     auto& mgr = GetPluginManager();
 
     CacheManager cache;
-    auto result = mgr.loadPlugin(name, cache);
+    auto         result = mgr.loadPlugin(name, cache);
 
     if (!result.has_value())
       return nullptr;
@@ -581,7 +584,7 @@ extern "C" {
       return nullptr;
 
     return new DracPlugin { *opt, std::move(name), false };
-#endif
+  #endif
   }
 
   auto DracLoadPluginFromPath(const char* path) -> DracPlugin* {
@@ -589,17 +592,17 @@ extern "C" {
       return nullptr;
 
     std::filesystem::path pluginPath(path);
-    auto parentDir = pluginPath.parent_path();
-    auto stem = pluginPath.stem().string();
+    auto                  parentDir = pluginPath.parent_path();
+    auto                  stem      = pluginPath.stem().string();
 
     auto& mgr = GetPluginManager();
     mgr.addSearchPath(parentDir);
-    
+
     // Discover plugins in the new search path
     (void)mgr.scanForPlugins();
 
     CacheManager cache;
-    auto result = mgr.loadPlugin(stem, cache);
+    auto         result = mgr.loadPlugin(stem, cache);
 
     if (!result.has_value())
       return nullptr;
@@ -629,8 +632,8 @@ extern "C" {
       return DRAC_ERROR_INVALID_ARGUMENT;
 
     PluginContext ctx;
-    PluginCache pluginCache(std::filesystem::temp_directory_path() / "draconis_plugins");
-    Result<Unit> result = plugin->inner->initialize(ctx, pluginCache);
+    PluginCache   pluginCache(std::filesystem::temp_directory_path() / "draconis_plugins");
+    Result<Unit>  result = plugin->inner->initialize(ctx, pluginCache);
 
     if (result.has_value())
       return DRAC_SUCCESS;
@@ -671,7 +674,7 @@ extern "C" {
     if (!plugin || !plugin->inner || !cache)
       return DRAC_ERROR_INVALID_ARGUMENT;
 
-    PluginCache pluginCache(std::filesystem::temp_directory_path() / "draconis_plugins");
+    PluginCache  pluginCache(std::filesystem::temp_directory_path() / "draconis_plugins");
     Result<Unit> result = plugin->inner->collectData(pluginCache);
 
     if (result.has_value())
@@ -698,8 +701,8 @@ extern "C" {
       return result;
 
     Map<String, String> fields = plugin->inner->getFields();
-    result.count                = fields.size();
-    result.items                = new DracPluginField[fields.size()];
+    result.count               = fields.size();
+    result.items               = new DracPluginField[fields.size()];
 
     size_t idx = 0;
     for (const auto& [key, value] : fields) {
@@ -757,10 +760,12 @@ extern "C" {
     int dummy;
   };
 
-  auto DracInitStaticPlugins(void) -> size_t { return 0; }
+  auto DracInitStaticPlugins(void) -> size_t {
+    return 0;
+  }
   auto DracInitPluginManager(void) -> void {}
   auto DracShutdownPluginManager(void) -> void {}
-  auto DracAddPluginSearchPath(const char*) -> void {}
+  auto DracAddPluginSearchPath(const char* /*unused*/) -> void {}
 
   auto DracDiscoverPlugins(void) -> DracPluginInfoList {
     return { nullptr, 0 };
@@ -773,45 +778,45 @@ extern "C" {
     }
   }
 
-  auto DracLoadPlugin(const char*) -> DracPlugin* {
+  auto DracLoadPlugin(const char* /*unused*/) -> DracPlugin* {
     return nullptr;
   }
 
-  auto DracLoadPluginFromPath(const char*) -> DracPlugin* {
+  auto DracLoadPluginFromPath(const char* /*unused*/) -> DracPlugin* {
     return nullptr;
   }
 
-  auto DracUnloadPlugin(DracPlugin*) -> void {}
+  auto DracUnloadPlugin(DracPlugin* /*unused*/) -> void {}
 
-  auto DracPluginInitialize(DracPlugin*, DracCacheManager*) -> DracErrorCode {
+  auto DracPluginInitialize(DracPlugin* /*unused*/, DracCacheManager* /*unused*/) -> DracErrorCode {
     return DRAC_ERROR_NOT_SUPPORTED;
   }
 
-  auto DracPluginSetConfig(DracPlugin*, const char*) -> DracErrorCode {
+  auto DracPluginSetConfig(DracPlugin* /*unused*/, const char* /*unused*/) -> DracErrorCode {
     return DRAC_ERROR_NOT_SUPPORTED;
   }
 
-  auto DracPluginIsEnabled(DracPlugin*) -> bool {
+  auto DracPluginIsEnabled(DracPlugin* /*unused*/) -> bool {
     return false;
   }
 
-  auto DracPluginIsReady(DracPlugin*) -> bool {
+  auto DracPluginIsReady(DracPlugin* /*unused*/) -> bool {
     return false;
   }
 
-  auto DracPluginCollectData(DracPlugin*, DracCacheManager*) -> DracErrorCode {
+  auto DracPluginCollectData(DracPlugin* /*unused*/, DracCacheManager* /*unused*/) -> DracErrorCode {
     return DRAC_ERROR_NOT_SUPPORTED;
   }
 
-  auto DracPluginGetJson(DracPlugin*) -> char* {
+  auto DracPluginGetJson(DracPlugin* /*unused*/) -> char* {
     return nullptr;
   }
 
-  auto DracPluginGetFields(DracPlugin*) -> DracPluginFieldList {
+  auto DracPluginGetFields(DracPlugin* /*unused*/) -> DracPluginFieldList {
     return { nullptr, 0 };
   }
 
-  auto DracPluginGetLastError(DracPlugin*) -> char* {
+  auto DracPluginGetLastError(DracPlugin* /*unused*/) -> char* {
     return nullptr;
   }
 

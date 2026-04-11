@@ -226,14 +226,20 @@ elif host_system == 'windows'
     cpp.find_library('ws2_32'),
   ]
 elif host_system not in ['serenity', 'haiku']
-  lib_deps += dependency('xau', required: get_option('xcb'))
-  lib_deps += dependency('xcb', required: get_option('xcb'))
-  lib_deps += dependency('xcb-randr', required: get_option('xcb'))
-  lib_deps += dependency('xdmcp', required: get_option('xcb'))
+  if feature_states['xcb']
+    lib_deps += dependency('xau', required: true)
+    lib_deps += dependency('xcb', required: true)
+    lib_deps += dependency('xcb-randr', required: true)
+    lib_deps += dependency('xdmcp', required: true)
+  endif
 
-  lib_deps += dependency('pugixml', required: get_option('pugixml'))
+  if feature_states['pugixml']
+    lib_deps += dependency('pugixml', required: true)
+  endif
 
-  lib_deps += dependency('wayland-client', required: get_option('wayland'))
+  if feature_states['wayland']
+    lib_deps += dependency('wayland-client', required: true)
+  endif
 endif
 
 # Glaze (JSON/BEVE serializer/deserializer)

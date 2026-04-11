@@ -50,10 +50,6 @@ namespace draconis::os::unix_shared {
 
   using enum error::DracErrorCode;
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Disk Usage (statvfs)
-  // ─────────────────────────────────────────────────────────────────────────────
-
   /**
    * @brief Gets disk usage statistics for a given path using statvfs.
    * @param path The filesystem path to query (e.g., "/", "/home", "/boot").
@@ -110,10 +106,6 @@ namespace draconis::os::unix_shared {
       .isSystemDrive = (std::strcmp(path, "/") == 0),
     };
   }
-
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Kernel Version (uname)
-  // ─────────────────────────────────────────────────────────────────────────────
 
   /**
    * @brief Gets the kernel release version string via uname.
@@ -193,12 +185,7 @@ namespace draconis::os::unix_shared {
     };
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Network Interfaces (getifaddrs) - Available on most Unix systems
-  // ─────────────────────────────────────────────────────────────────────────────
-
   #if DRAC_HAS_IFADDRS
-
   /**
    * @brief RAII wrapper for ifaddrs list.
    *
@@ -314,12 +301,7 @@ namespace draconis::os::unix_shared {
   [[nodiscard]] constexpr auto IsLoopback(types::u32 flags) noexcept -> bool {
     return (flags & IFF_LOOPBACK) != 0;
   }
-
   #endif // DRAC_HAS_IFADDRS
-
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Uptime Utilities
-  // ─────────────────────────────────────────────────────────────────────────────
 
   #if defined(__linux__)
   /**
@@ -337,7 +319,6 @@ namespace draconis::os::unix_shared {
     return std::chrono::seconds(info.uptime);
   }
   #endif
-
 } // namespace draconis::os::unix_shared
 
 #endif // !defined(_WIN32)

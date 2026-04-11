@@ -42,9 +42,14 @@
   #include "Drac++/Utils/Logging.hpp"
   #include "Drac++/Utils/Types.hpp"
 
+  #if DRAC_USE_WAYLAND
+    #include "Wrappers/Wayland.hpp"
+  #endif
+  #if DRAC_USE_XCB
+    #include "Wrappers/XCB.hpp"
+  #endif
+
   #include "OS/Unix.hpp"
-  #include "Wrappers/Wayland.hpp"
-  #include "Wrappers/XCB.hpp"
 
 using draconis::utils::error::DracError;
 using enum draconis::utils::error::DracErrorCode;
@@ -201,7 +206,7 @@ namespace {
       if (const usize closePos = device.find(']', openPos); closePos != String::npos)
         device = device.substr(openPos + 1, closePos - openPos - 1);
 
-    constexpr auto trim = [](String& str) {
+    constexpr auto trim = [](String& str) -> void {
       if (const usize pos = str.find_last_not_of(" \t\n\r"); pos != String::npos)
         str.erase(pos + 1);
       if (const usize pos = str.find_first_not_of(" \t\n\r"); pos != String::npos)
@@ -606,17 +611,17 @@ namespace {
       interface.isLoopback = ifa->ifa_flags & IFF_LOOPBACK;
 
       match(ifa->ifa_addr->sa_family)(
-        is | AF_INET = [&]() { // IPv4
+        is | AF_INET = [&]() -> void { // IPv4
           Array<char, NI_MAXHOST> host = {};
           if (getnameinfo(ifa->ifa_addr, sizeof(sockaddr_in), host.data(), host.size(), nullptr, 0, NI_NUMERICHOST) == 0)
             interface.ipv4Address = { host.data() };
         },
-        is | AF_INET6 = [&]() { // IPv6
+        is | AF_INET6 = [&]() -> void { // IPv6
           Array<char, NI_MAXHOST> host = {};
           if (getnameinfo(ifa->ifa_addr, sizeof(sockaddr_in6), host.data(), host.size(), nullptr, 0, NI_NUMERICHOST) == 0)
             interface.ipv6Address = { host.data() };
         },
-        is | AF_PACKET = [&]() { // MAC address
+        is | AF_PACKET = [&]() -> void { // MAC address
           // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
           auto* sll = reinterpret_cast<sockaddr_ll*>(ifa->ifa_addr);
 
@@ -631,7 +636,7 @@ namespace {
               sll->sll_addr[5]
             );
         },
-        is | _ = [&]() { return; }
+        is | _ = [&]() -> void { return; }
       );
     }
 
@@ -687,7 +692,7 @@ namespace draconis::core::system {
 
       String line;
 
-      const auto parseValue = [&](String& val) {
+      const auto parseValue = [&](String& val) -> void {
         if (val.length() >= 2 && ((val.front() == '"' && val.back() == '"') || (val.front() == '\'' && val.back() == '\'')))
           val = val.substr(1, val.length() - 2);
       };
@@ -968,7 +973,7 @@ namespace draconis::core::system {
             return CleanGpuModelName(std::move(pciNames->first), std::move(pciNames->second));
 
         if (vendorIdRes) {
-          const auto* iter = std::ranges::find_if(fallbackVendorMap, [&](const auto& pair) {
+          const auto* iter = std::ranges::find_if(fallbackVendorMap, [&](const auto& pair) -> auto {
             return pair.first == *vendorIdRes;
           });
 
@@ -1000,16 +1005,22 @@ namespace draconis::core::system {
     if (mtab == nullptr)
       ERR(IoError, "setmntent(\"/proc/mounts\") failed: could not open mount table");
 
+    UniquePointer<FILE, decltype(&endmntent)> mountTable(mtab, &endmntent);
+
     Vec<DiskInfo> disks;
 
-    // NOLINTBEGIN(concurrency-mt-unsafe) — getmntent is MT-unsafe but we don't call it from multiple threads
-    while (const struct mntent* entry = getmntent(mtab)) {
+    struct mntent     entryBuffer {};
+    Array<char, 4096> mountBuffer {};
+
+    while (getmntent_r(mtab, &entryBuffer, mountBuffer.data(), static_cast<i32>(mountBuffer.size())) != nullptr) {
+      const StringView filesystemName = entryBuffer.mnt_fsname;
+
       // Skip virtual filesystems — real block devices start with '/'
-      if (entry->mnt_fsname[0] != '/')
+      if (!filesystemName.starts_with('/'))
         continue;
 
       struct statvfs stat;
-      if (statvfs(entry->mnt_dir, &stat) == -1)
+      if (statvfs(entryBuffer.mnt_dir, &stat) == -1)
         continue;
 
       const u64 totalBytes = static_cast<u64>(stat.f_blocks) * static_cast<u64>(stat.f_frsize);
@@ -1019,18 +1030,15 @@ namespace draconis::core::system {
         continue;
 
       disks.push_back(DiskInfo {
-        .name          = String(entry->mnt_fsname),
-        .mountPoint    = String(entry->mnt_dir),
-        .filesystem    = String(entry->mnt_type),
+        .name          = String(entryBuffer.mnt_fsname),
+        .mountPoint    = String(entryBuffer.mnt_dir),
+        .filesystem    = String(entryBuffer.mnt_type),
         .driveType     = String("Local"),
         .totalBytes    = totalBytes,
         .usedBytes     = totalBytes - freeBytes,
-        .isSystemDrive = (std::strcmp(entry->mnt_dir, "/") == 0),
+        .isSystemDrive = (std::strcmp(entryBuffer.mnt_dir, "/") == 0),
       });
     }
-    // NOLINTEND(concurrency-mt-unsafe)
-
-    endmntent(mtab);
 
     return disks;
   }
@@ -1131,7 +1139,7 @@ namespace draconis::core::system {
       if (primaryInterfaceName.empty())
         if (auto iter = std::ranges::find_if(
               interfaces,
-              [](const auto& pair) {
+              [](const auto& pair) -> auto {
                 const auto& iface = pair.second;
                 return iface.isUp && !iface.isLoopback;
               }

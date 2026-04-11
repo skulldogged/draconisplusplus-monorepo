@@ -141,7 +141,13 @@
               dotnet-sdk_8
 
               (writeScriptBin "build" "meson compile -C build")
-              (writeScriptBin "clean" ("meson setup build --wipe -Dprecompiled_config=true" + lib.optionalString pkgs.stdenv.isLinux " -Duse_linked_pci_ids=true"))
+               (writeScriptBin "clean" (
+                 "meson setup build --wipe"
+                 + " -Dprecompiled_config=true"
+                 + " -Dcaching=enabled"
+                 + " -Dpackagecount=enabled"
+                 + lib.optionalString pkgs.stdenv.isLinux " -Duse_linked_pci_ids=true -Dxcb=enabled -Dwayland=enabled -Dpugixml=enabled"
+               ))
               (writeScriptBin "run" "meson compile -C build && build/core/src/CLI/draconis++")
             ])
             ++ devShellDeps;
