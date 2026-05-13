@@ -166,10 +166,10 @@
               export NIX_OBJCXXFLAGS_COMPILE="-isysroot $SDKROOT -mmacosx-version-min=14.0"
             ''
             + lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
-              cp ${pkgs.pciutils}/share/pci.ids pci.ids
-              chmod +w pci.ids
-              objcopy -I binary -O default pci.ids pci_ids.o
-              rm pci.ids
+               cp ${pkgs.pciutils}/share/pci.ids pci.ids
+               chmod +w pci.ids
+               ld -r -b binary -o pci_ids.o pci.ids
+               rm pci.ids
             '';
         };
 

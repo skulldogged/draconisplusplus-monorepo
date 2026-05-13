@@ -130,7 +130,7 @@
         lib.optionalString stdenv.isLinux ''
           cp ${pkgs.pciutils}/share/pci.ids pci.ids
           chmod +w pci.ids
-          objcopy -I binary -O default pci.ids pci_ids.o
+          ld -r -b binary -o pci_ids.o pci.ids
           rm pci.ids
         ''
         + ''
