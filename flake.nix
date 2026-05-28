@@ -16,11 +16,6 @@
   }: let
     inherit (nixpkgs) lib;
 
-    pluginsSrc =
-      let envPath = builtins.getEnv "DRACONIS_PLUGINS_SRC"; in
-      if envPath == ""
-      then null
-      else builtins.path {path = envPath; name = "draconisplusplus-plugins";};
   in
     {
       homeModules.default = import ./nix/module.nix {inherit self;};
@@ -117,7 +112,7 @@
             wayland
           ]));
 
-        draconisPkgs = import ./nix {inherit nixpkgs self system lib pluginsSrc;};
+        draconisPkgs = import ./nix {inherit nixpkgs self system lib;};
       in {
         packages = draconisPkgs;
         checks = draconisPkgs;

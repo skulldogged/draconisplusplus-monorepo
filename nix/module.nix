@@ -258,14 +258,7 @@ with lib; let
       #endif
     '';
 
-  packageWithPlugins =
-    if cfg.pluginsSrc == null
-    then cfg.package
-    else if lib.hasAttr "override" cfg.package
-    then cfg.package.override {pluginsSrc = cfg.pluginsSrc;}
-    else cfg.package;
-
-  draconisWithOverrides = packageWithPlugins.overrideAttrs (oldAttrs: {
+  draconisWithOverrides = cfg.package.overrideAttrs (oldAttrs: {
     postPatch =
       (oldAttrs.postPatch or "")
       + lib.optionalString (cfg.configFormat == "hpp") ''
@@ -293,12 +286,6 @@ in {
       type = types.package;
       default = defaultPackage;
       description = "The base draconis++ package.";
-    };
-
-    pluginsSrc = mkOption {
-      type = types.nullOr types.path;
-      default = null;
-      description = "Path to the draconis++ plugins repository for static plugin builds.";
     };
 
     configFormat = mkOption {
