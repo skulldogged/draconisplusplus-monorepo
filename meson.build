@@ -69,6 +69,10 @@ else
   endforeach
 endif
 
+if get_option('plugins').disabled() and static_plugin_list.length() > 0
+  error('-Dstatic_plugins= requires the plugin system; remove -Dplugins=disabled.')
+endif
+
 # ============================== #
 #  Subdirectories                #
 # ============================== #

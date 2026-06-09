@@ -137,6 +137,10 @@
         "-Dbuild_for_musl=true"
         "-Dbuild_examples=false"
         "-Duse_linked_pci_ids=true"
+        # Fully static binary: dlopen is unavailable, so disable the plugin
+        # system. For plugins in a musl build, override with
+        # -Dplugins=enabled -Dstatic_plugins=... instead.
+        "-Dplugins=disabled"
       ];
 
       buildInputs = deps;

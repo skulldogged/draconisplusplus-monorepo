@@ -115,6 +115,8 @@ at startup.
 
 - **Static plugins** are registered and loaded automatically at startup.
 - **Dynamic plugins** are discovered by scanning, in order:
+  - any directories in the `DRAC_PLUGIN_PATH` environment variable
+    (colon-separated on Unix, semicolon-separated on Windows)
   - `/usr/local/lib/draconis++/plugins`, `/usr/lib/draconis++/plugins`,
     `~/.local/lib/draconis++/plugins`, and `./plugins` (Unix)
   - `%LOCALAPPDATA%\draconis++\plugins`, `%APPDATA%\draconis++\plugins`,

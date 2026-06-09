@@ -44,10 +44,31 @@ namespace draconis::core::plugin {
     // Default search paths for plugins
     auto GetDefaultPluginPaths() -> const Vec<fs::path>& {
       static const Vec<fs::path> DEFAULT_PLUGIN_PATHS = []() -> Vec<fs::path> {
-        Vec<fs::path> paths;
-  #ifdef _WIN32
         using draconis::utils::env::GetEnv;
 
+        Vec<fs::path> paths;
+
+        // Paths from DRAC_PLUGIN_PATH take priority (colon-separated on Unix,
+        // semicolon-separated on Windows). Needed on systems without the FHS
+        // directories below (e.g. Nix) and handy for plugin development.
+  #ifdef _WIN32
+        constexpr char PATH_SEPARATOR = ';';
+  #else
+        constexpr char PATH_SEPARATOR = ':';
+  #endif
+        if (auto result = GetEnv("DRAC_PLUGIN_PATH")) {
+          const String& value = *result;
+          for (String::size_type start = 0; start <= value.size();) {
+            String::size_type end = value.find(PATH_SEPARATOR, start);
+            if (end == String::npos)
+              end = value.size();
+            if (end > start)
+              paths.emplace_back(value.substr(start, end - start));
+            start = end + 1;
+          }
+        }
+
+  #ifdef _WIN32
         if (auto result = GetEnv("LOCALAPPDATA"))
           paths.push_back(fs::path(*result) / "draconis++" / "plugins");
 

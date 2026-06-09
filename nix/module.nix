@@ -219,8 +219,8 @@ with lib; let
         weather::config::Coordinates { 0.0, 0.0 }
       );
     '';
-  # Check if weather plugin is in static plugins
-  hasWeatherPlugin = builtins.elem "weather" cfg.staticPlugins;
+  # Check if the weather plugin will be compiled in ("all" includes it)
+  hasWeatherPlugin = builtins.elem "weather" cfg.staticPlugins || builtins.elem "all" cfg.staticPlugins;
 
   configHpp =
     pkgs.writeText "config.hpp"
@@ -274,7 +274,8 @@ with lib; let
         "-Dplugins=${if cfg.enablePlugins then "enabled" else "disabled"}"
         "-Dpugixml=${if cfg.usePugixml then "enabled" else "disabled"}"
       ]
-      ++ lib.optional (cfg.staticPlugins != []) "-Dstatic_plugins=${lib.concatStringsSep "," cfg.staticPlugins}";
+      ++ lib.optional (cfg.staticPlugins != []) "-Dstatic_plugins=${lib.concatStringsSep "," cfg.staticPlugins}"
+      ++ lib.optional (cfg.pluginDirs != []) "-Dplugin_dirs=${lib.concatStringsSep "," (map toString cfg.pluginDirs)}";
   });
 
   draconisPkg = draconisWithOverrides;
@@ -381,9 +382,25 @@ in {
     };
 
     staticPlugins = mkOption {
-      type = types.listOf (types.enum ["weather" "now_playing" "json_format" "markdown_format" "yaml_format"]);
+      type = types.listOf types.str;
       default = [];
-      description = "Plugins to compile statically into the binary (precompiled config only).";
+      description = ''
+        Plugins to compile statically into the binary. Accepts any discovered
+        plugin name (bundled or from pluginDirs), or "all" for every
+        discovered plugin. Names are validated by the build.
+      '';
+      example = literalExpression ''["weather" "now_playing"]'';
+    };
+
+    pluginDirs = mkOption {
+      type = types.listOf types.path;
+      default = [];
+      description = ''
+        Additional plugin directories passed to the build via -Dplugin_dirs=.
+        Each subdirectory containing a plugin.json is discovered as a plugin,
+        so user-made plugins build exactly like bundled ones.
+      '';
+      example = literalExpression ''[./my-draconis-plugins]'';
     };
 
     pluginAutoLoad = mkOption {
@@ -481,6 +498,13 @@ in {
   config = mkIf cfg.enable {
     home.packages = [draconisPkg];
 
+    # Dynamic plugins are installed under the package's lib dir, which the
+    # FHS search paths never cover on Nix; DRAC_PLUGIN_PATH points the
+    # plugin loader at them.
+    home.sessionVariables = lib.optionalAttrs (cfg.enablePlugins && cfg.staticPlugins == []) {
+      DRAC_PLUGIN_PATH = "${draconisPkg}/lib/draconis++/plugins";
+    };
+
     xdg.configFile =
       lib.optionalAttrs (cfg.configFormat == "toml") {
         "draconis++/config.toml" = {
@@ -514,8 +538,8 @@ in {
         message = "Plugins must be enabled to auto-load plugins.";
       }
       {
-        assertion = !(cfg.staticPlugins != [] && cfg.configFormat != "hpp");
-        message = "Static plugins require the precompiled (hpp) configuration.";
+        assertion = !(cfg.staticPlugins != [] && !cfg.enablePlugins);
+        message = "Plugins must be enabled to compile static plugins.";
       }
     ];
   };
