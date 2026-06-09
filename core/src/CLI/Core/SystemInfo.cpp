@@ -1,5 +1,7 @@
 #include "SystemInfo.hpp"
 
+#include <future>
+
 #include <Drac++/Core/System.hpp>
 
 #if DRAC_ENABLE_PLUGINS
@@ -64,8 +66,6 @@ namespace draconis::core::system {
   } // namespace
 
   SystemInfo::SystemInfo(utils::cache::CacheManager& cache, const Config& config) {
-    debug_log("SystemInfo: Starting construction");
-
     // I'm not sure if AMD uses trademark symbols in their CPU models, but I know
     // Intel does. Might as well replace them with their unicode counterparts.
     auto replaceTrademarkSymbols = [](Result<String> str) -> Result<String> {
@@ -82,44 +82,49 @@ namespace draconis::core::system {
       return value;
     };
 
-    debug_log("SystemInfo: Getting desktop environment");
-    this->desktopEnv = GetDesktopEnvironment(cache);
-    debug_log("SystemInfo: Getting window manager");
-    this->windowMgr = GetWindowManager(cache);
-    debug_log("SystemInfo: Getting operating system");
-    this->operatingSystem = GetOperatingSystem(cache);
-    debug_log("SystemInfo: Getting kernel version");
-    this->kernelVersion = GetKernelVersion(cache);
-    debug_log("SystemInfo: Getting host");
-    this->host = GetHost(cache);
-    debug_log("SystemInfo: Getting CPU model");
-    this->cpuModel = replaceTrademarkSymbols(GetCPUModel(cache));
-    debug_log("SystemInfo: Getting CPU cores");
-    this->cpuCores = GetCPUCores(cache);
-    debug_log("SystemInfo: Getting GPU model");
-    this->gpuModel = GetGPUModel(cache);
-    debug_log("SystemInfo: Getting shell");
-    this->shell = GetShell(cache);
-    debug_log("SystemInfo: Getting memory info");
-    this->memInfo = GetMemInfo(cache);
-    debug_log("SystemInfo: Getting disk usage");
-    this->diskUsage = GetDiskUsage(cache);
-    debug_log("SystemInfo: Getting uptime");
-    this->uptime = GetUptime();
-    debug_log("SystemInfo: Getting date");
-    this->date = GetDate();
+    // Launch all independent queries concurrently. The CacheManager mutex is
+    // held only briefly for map operations, so parallel fetches do not serialize.
+    auto fDesktopEnv = std::async(std::launch::async, [&] { return GetDesktopEnvironment(cache); });
+    auto fWindowMgr  = std::async(std::launch::async, [&] { return GetWindowManager(cache); });
+    auto fOS         = std::async(std::launch::async, [&] { return GetOperatingSystem(cache); });
+    auto fKernel     = std::async(std::launch::async, [&] { return GetKernelVersion(cache); });
+    auto fHost       = std::async(std::launch::async, [&] { return GetHost(cache); });
+    auto fCPUModel   = std::async(std::launch::async, [&] { return replaceTrademarkSymbols(GetCPUModel(cache)); });
+    auto fCPUCores   = std::async(std::launch::async, [&] { return GetCPUCores(cache); });
+    auto fGPUModel   = std::async(std::launch::async, [&] { return GetGPUModel(cache); });
+    auto fShell      = std::async(std::launch::async, [&] { return GetShell(cache); });
+    auto fMemInfo    = std::async(std::launch::async, [&] { return GetMemInfo(cache); });
+    auto fDiskUsage  = std::async(std::launch::async, [&] { return GetDiskUsage(cache); });
+    auto fUptime     = std::async(std::launch::async, [] { return GetUptime(); });
+    auto fDate       = std::async(std::launch::async, [] { return GetDate(); });
 
 #if DRAC_ENABLE_PACKAGECOUNT
-    debug_log("SystemInfo: Getting package count");
-    this->packageCount = draconis::services::packages::GetTotalCount(cache, config.enabledPackageManagers);
+    auto fPkgCount = std::async(std::launch::async, [&] {
+      return draconis::services::packages::GetTotalCount(cache, config.enabledPackageManagers);
+    });
+#endif
+
+    this->desktopEnv      = fDesktopEnv.get();
+    this->windowMgr       = fWindowMgr.get();
+    this->operatingSystem = fOS.get();
+    this->kernelVersion   = fKernel.get();
+    this->host            = fHost.get();
+    this->cpuModel        = fCPUModel.get();
+    this->cpuCores        = fCPUCores.get();
+    this->gpuModel        = fGPUModel.get();
+    this->shell           = fShell.get();
+    this->memInfo         = fMemInfo.get();
+    this->diskUsage       = fDiskUsage.get();
+    this->uptime          = fUptime.get();
+    this->date            = fDate.get();
+
+#if DRAC_ENABLE_PACKAGECOUNT
+    this->packageCount = fPkgCount.get();
 #endif
 
 #if DRAC_ENABLE_PLUGINS
-    debug_log("SystemInfo: Collecting plugin data");
-    // Collect plugin data efficiently (only if plugins are enabled and initialized)
     collectPluginData(cache);
 #endif
-    debug_log("SystemInfo: Construction complete");
   }
 
   auto SystemInfo::toMap() const -> Map<String, String> {

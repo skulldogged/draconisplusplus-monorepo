@@ -270,7 +270,7 @@ namespace draconis::core::plugin {
   auto PluginManager::loadPlugin(const String& pluginName, CacheManager& cache) -> Result<Unit> {
     std::unique_lock<std::shared_mutex> lock(m_mutex);
 
-    if (m_plugins.contains(pluginName) && m_plugins.at(pluginName).isLoaded) {
+    if (const auto it = m_plugins.find(pluginName); it != m_plugins.end() && it->second.isLoaded) {
       debug_log("Plugin '{}' is already loaded.", pluginName);
       return {};
     }
@@ -339,10 +339,11 @@ namespace draconis::core::plugin {
     }
 
     // Fall back to dynamic loading
-    if (!m_discoveredPlugins.contains(pluginName))
+    const auto discIt = m_discoveredPlugins.find(pluginName);
+    if (discIt == m_discoveredPlugins.end())
       ERR_FMT(NotFound, "Plugin '{}' not found in search paths.", pluginName);
 
-    const fs::path& pluginPath = m_discoveredPlugins.at(pluginName);
+    const fs::path& pluginPath = discIt->second;
 
     debug_log("Loading plugin '{}' from '{}'", pluginName, pluginPath.string());
 
@@ -399,10 +400,11 @@ namespace draconis::core::plugin {
   auto PluginManager::unloadPlugin(const String& pluginName) -> Result<Unit> {
     std::unique_lock<std::shared_mutex> lock(m_mutex);
 
-    if (!m_plugins.contains(pluginName))
+    auto pluginIt = m_plugins.find(pluginName);
+    if (pluginIt == m_plugins.end())
       ERR_FMT(NotFound, "Plugin '{}' is not loaded.", pluginName);
 
-    LoadedPlugin& loadedPlugin = m_plugins.at(pluginName);
+    LoadedPlugin& loadedPlugin = pluginIt->second;
 
     if (loadedPlugin.isReady) {
       debug_log("Shutting down plugin instance '{}'", pluginName);
@@ -452,8 +454,8 @@ namespace draconis::core::plugin {
 
   auto PluginManager::getPlugin(const String& pluginName) const -> Option<IPlugin*> {
     std::shared_lock<std::shared_mutex> lock(m_mutex);
-    if (m_plugins.contains(pluginName))
-      return m_plugins.at(pluginName).instance.get();
+    if (const auto it = m_plugins.find(pluginName); it != m_plugins.end())
+      return it->second.instance.get();
 
     return std::nullopt;
   }
@@ -505,7 +507,8 @@ namespace draconis::core::plugin {
 
   auto PluginManager::isPluginLoaded(const String& pluginName) const -> bool {
     std::shared_lock<std::shared_mutex> lock(m_mutex);
-    return m_plugins.contains(pluginName) && m_plugins.at(pluginName).isLoaded;
+    const auto it = m_plugins.find(pluginName);
+    return it != m_plugins.end() && it->second.isLoaded;
   }
 
   auto PluginManager::loadDynamicLibrary(const fs::path& path) -> Result<DynamicLibraryHandle> {

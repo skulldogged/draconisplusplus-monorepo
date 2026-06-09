@@ -124,6 +124,9 @@ cpp_args += cpp.get_supported_arguments(
     '-fvisibility=hidden',
     '-fvisibility-inlines-hidden',
     '-march=native',
+    # Enable per-function/data sections so the linker can strip unused code
+    '-ffunction-sections',
+    '-fdata-sections',
 
     # Warning flags
     '-Wno-c++17-extensions',
@@ -143,6 +146,19 @@ cpp_args += cpp.get_supported_arguments(
 )
 
 add_project_arguments(cpp_args, language: 'cpp')
+
+# Strip dead code at link time (ELF platforms only; macOS uses -dead_strip instead)
+if host_system not in ['windows', 'darwin']
+  add_project_link_arguments(
+    cpp.get_supported_link_arguments('-Wl,--gc-sections'),
+    language: 'cpp',
+  )
+elif host_system == 'darwin'
+  add_project_link_arguments(
+    cpp.get_supported_link_arguments('-Wl,-dead_strip'),
+    language: 'cpp',
+  )
+endif
 
 if host_system == 'darwin'
   add_languages('objcpp', native: false)

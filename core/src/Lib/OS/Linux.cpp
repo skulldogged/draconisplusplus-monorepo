@@ -803,9 +803,6 @@ namespace draconis::core::system {
             return shellPath.substr(lastSlash + 1);
 
           return shellPath;
-        })
-        .transform([](const String& shellPath) -> String {
-          return shellPath;
         });
     });
   }
@@ -1209,7 +1206,7 @@ namespace draconis::core::system {
       status,
       percentage,
       ReadSysFile(
-        batteryPath / std::format("/time_to_{}now", status == Discharging ? "empty" : "full")
+        batteryPath / std::format("time_to_{}_now", status == Discharging ? "empty" : "full")
       )
         .transform([](const String& timeStr) -> Option<std::chrono::seconds> {
           if (Option<i32> timeMinutes = TryParse<i32>(timeStr); timeMinutes && *timeMinutes > 0)

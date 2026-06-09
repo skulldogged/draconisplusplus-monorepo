@@ -6,7 +6,6 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <sstream>
 #ifndef _WIN32
   #include <sys/ioctl.h> // TIOCGWINSZ
   #include <unistd.h>    // STDOUT_FILENO
@@ -790,13 +789,24 @@ namespace draconis::ui {
       }
 
       // First, split into words with their widths
-      Vec<String>       words;
-      Vec<usize>        wordWidths;
-      std::stringstream textStream((String(text)));
-      String            word;
-      while (textStream >> word) {
-        wordWidths.push_back(GetVisualWidth(word));
-        words.push_back(std::move(word));
+      Vec<String> words;
+      Vec<usize>  wordWidths;
+      {
+        usize start = 0;
+        const usize len = text.size();
+        while (start < len) {
+          while (start < len && static_cast<unsigned char>(text[start]) <= ' ')
+            ++start;
+          if (start >= len) break;
+          usize end = start;
+          while (end < len && static_cast<unsigned char>(text[end]) > ' ')
+            ++end;
+          if (end > start) {
+            words.emplace_back(text.substr(start, end - start));
+            wordWidths.push_back(GetVisualWidth(words.back()));
+          }
+          start = end;
+        }
       }
 
       if (words.empty())
@@ -996,19 +1006,22 @@ namespace draconis::ui {
         String coloredLabel = Stylize(row.label, { .color = DEFAULT_THEME.label });
         String coloredValue = Stylize(row.value, { .color = row.color });
 
-        // Debug: check if colored strings have different visual widths
-        usize coloredIconW  = GetVisualWidth(coloredIcon);
-        usize coloredLabelW = GetVisualWidth(coloredLabel);
-        usize coloredValueW = GetVisualWidth(coloredValue);
-        if (coloredIconW != iconW || coloredLabelW != labelWidth || coloredValueW != valueW)
-          debug_log(
-            "Width mismatch! Icon: {} vs {}, Label: {} vs {}, Value: {} vs {}",
-            // clang-format off
-            iconW,      coloredIconW,
-            labelWidth, coloredLabelW,
-            valueW,     coloredValueW
-            // clang-format on
-          );
+#if DRAC_DEBUG
+        {
+          const usize coloredIconW  = GetVisualWidth(coloredIcon);
+          const usize coloredLabelW = GetVisualWidth(coloredLabel);
+          const usize coloredValueW = GetVisualWidth(coloredValue);
+          if (coloredIconW != iconW || coloredLabelW != labelWidth || coloredValueW != valueW)
+            debug_log(
+              "Width mismatch! Icon: {} vs {}, Label: {} vs {}, Value: {} vs {}",
+              // clang-format off
+              iconW,      coloredIconW,
+              labelWidth, coloredLabelW,
+              valueW,     coloredValueW
+              // clang-format on
+            );
+        }
+#endif
 
         group.coloredIcons.push_back(coloredIcon);
         group.coloredLabels.push_back(coloredLabel);
@@ -1457,15 +1470,19 @@ namespace draconis::ui {
     out += hBorder;
     out += "╯\n";
 
-    Vec<String>       boxLines;
-    std::stringstream stream(out);
-    String            line;
-
-    while (std::getline(stream, line, '\n'))
-      boxLines.push_back(line);
-
-    if (!boxLines.empty() && boxLines.back().empty())
-      boxLines.pop_back();
+    Vec<String> boxLines;
+    {
+      usize start = 0;
+      usize end;
+      while ((end = out.find('\n', start)) != String::npos) {
+        boxLines.emplace_back(out, start, end - start);
+        start = end + 1;
+      }
+      if (start < out.size())
+        boxLines.emplace_back(out, start);
+      if (!boxLines.empty() && boxLines.back().empty())
+        boxLines.pop_back();
+    }
 
     usize  boxWidth = GetVisualWidth(boxLines[0]);
     String emptyBox = "│" + String(boxWidth - 2, ' ') + "│";

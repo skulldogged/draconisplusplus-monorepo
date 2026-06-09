@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <glaze/glaze.hpp>
 
 #include "DataTypes.hpp"
@@ -97,22 +98,29 @@ namespace draconis::utils::cache {
         if (ignoreCache)
           return fetcher();
 
-        types::LockGuard lock(m_cacheMutex);
+        CachePolicy             policy;
+        types::Option<fs::path> filePath;
 
-        const CachePolicy& policy = overridePolicy.value_or(m_globalPolicy);
+        // Phase 1: brief lock – check in-memory cache only
+        {
+          types::LockGuard lock(m_cacheMutex);
 
-        // 1. Check in-memory cache
-        if (const auto iter = m_inMemoryCache.find(key); iter != m_inMemoryCache.end())
-          if (
-            CacheEntry<T> entry; glz::read_beve(entry, iter->second.first) == glz::error_code::none &&
-            (!entry.expires.has_value() || system_clock::now() < system_clock::time_point(seconds(*entry.expires)))
-          )
-            return entry.data;
+          policy   = overridePolicy.value_or(m_globalPolicy);
+          filePath = getCacheFilePath(key, policy.location);
 
-        // 2. Check filesystem cache
-        const types::Option<fs::path> filePath = getCacheFilePath(key, policy.location);
+          if (const auto iter = m_inMemoryCache.find(key); iter != m_inMemoryCache.end()) {
+            CacheEntry<T> entry;
 
-        if (filePath && fs::exists(*filePath)) {
+            if (
+              glz::read_beve(entry, iter->second.first) == glz::error_code::none &&
+              (!entry.expires.has_value() || system_clock::now() < system_clock::time_point(seconds(*entry.expires)))
+            )
+              return entry.data;
+          }
+        }
+
+        // Phase 2: filesystem check – no lock held during I/O
+        if (filePath) {
           if (std::ifstream ifs(*filePath, std::ios::binary); ifs) {
             std::string fileContents((std::istreambuf_iterator<char>(ifs)), {});
 
@@ -120,24 +128,32 @@ namespace draconis::utils::cache {
 
             if (glz::read_beve(entry, fileContents) == glz::error_code::none) {
               if (!entry.expires.has_value() || system_clock::now() < system_clock::time_point(seconds(*entry.expires))) {
-                system_clock::time_point expiryTp = entry.expires.has_value() ? system_clock::time_point(seconds(*entry.expires)) : system_clock::time_point::max();
+                system_clock::time_point expiryTp = entry.expires.has_value()
+                  ? system_clock::time_point(seconds(*entry.expires))
+                  : system_clock::time_point::max();
 
-                m_inMemoryCache[key] = { fileContents, expiryTp };
+                T cachedData = entry.data;
 
-                return entry.data;
+                {
+                  types::LockGuard lock(m_cacheMutex);
+                  m_inMemoryCache[key] = { fileContents, expiryTp };
+                }
+
+                return cachedData;
               }
             }
           }
         }
 
-        // 3. Cache miss: call fetcher (move the callable to indicate consumption)
+        // Phase 3: cache miss – call fetcher without holding the lock
         types::Result<T> fetchedResult = fetcher();
 
         if (!fetchedResult)
           return fetchedResult;
 
-        // 4. Store in cache
+        // Phase 4: serialize result outside the lock
         types::Option<types::u64> expiryTs;
+
         if (policy.ttl.has_value()) {
           system_clock::time_point now        = system_clock::now();
           system_clock::time_point expiryTime = now + *policy.ttl;
@@ -157,15 +173,20 @@ namespace draconis::utils::cache {
           ? system_clock::time_point(seconds(*expiryTs))
           : system_clock::time_point::max();
 
-        m_inMemoryCache[key] = { binaryBuffer, inMemoryExpiryTp };
+        // Phase 5: store in memory cache (brief lock)
+        {
+          types::LockGuard lock(m_cacheMutex);
+          m_inMemoryCache[key] = { binaryBuffer, inMemoryExpiryTp };
+        }
 
+        // Phase 6: persist to disk – no lock held during I/O
         if (policy.location != CacheLocation::InMemory && filePath) {
           std::error_code errc;
           fs::create_directories(filePath->parent_path(), errc);
+
           if (!errc) {
-            if (std::ofstream ofs(*filePath, std::ios::binary | std::ios::trunc); ofs.is_open()) {
+            if (std::ofstream ofs(*filePath, std::ios::binary | std::ios::trunc); ofs.is_open())
               ofs.write(binaryBuffer.data(), static_cast<std::streamsize>(binaryBuffer.size()));
-            }
           }
         }
 
