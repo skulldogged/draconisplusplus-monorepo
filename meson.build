@@ -18,6 +18,19 @@ cpp = meson.get_compiler('cpp')
 host_system = host_machine.system()
 fs = import('fs')
 
+# Release-only codegen tuning: section-level dead-code elimination and
+# direct (no-PLT) calls into shared libraries.
+if get_option('buildtype') == 'release'
+  add_project_arguments(
+    cpp.get_supported_arguments('-ffunction-sections', '-fdata-sections', '-fno-plt'),
+    language: ['cpp', 'c'],
+  )
+  add_project_link_arguments(
+    cpp.get_supported_link_arguments('-Wl,--gc-sections', '-Wl,-O1'),
+    language: ['cpp', 'c'],
+  )
+endif
+
 # ============================== #
 #  Plugin Discovery              #
 # ============================== #

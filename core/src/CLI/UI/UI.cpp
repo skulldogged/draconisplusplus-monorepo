@@ -789,14 +789,24 @@ namespace draconis::ui {
         return lines;
       }
 
-      // First, split into words with their widths
-      Vec<String>       words;
-      Vec<usize>        wordWidths;
-      std::stringstream textStream((String(text)));
-      String            word;
-      while (textStream >> word) {
-        wordWidths.push_back(GetVisualWidth(word));
-        words.push_back(std::move(word));
+      // First, split into words with their widths (views into the input;
+      // no per-word allocations)
+      Vec<StringView> words;
+      Vec<usize>      wordWidths;
+
+      for (usize pos = 0; pos < text.size();) {
+        while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos])) != 0)
+          ++pos;
+
+        const usize wordStart = pos;
+
+        while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos])) == 0)
+          ++pos;
+
+        if (pos > wordStart) {
+          words.push_back(text.substr(wordStart, pos - wordStart));
+          wordWidths.push_back(GetVisualWidth(words.back()));
+        }
       }
 
       if (words.empty())
@@ -996,6 +1006,7 @@ namespace draconis::ui {
         String coloredLabel = Stylize(row.label, { .color = DEFAULT_THEME.label });
         String coloredValue = Stylize(row.value, { .color = row.color });
 
+#ifndef NDEBUG
         // Debug: check if colored strings have different visual widths
         usize coloredIconW  = GetVisualWidth(coloredIcon);
         usize coloredLabelW = GetVisualWidth(coloredLabel);
@@ -1009,10 +1020,11 @@ namespace draconis::ui {
             valueW,     coloredValueW
             // clang-format on
           );
+#endif
 
-        group.coloredIcons.push_back(coloredIcon);
-        group.coloredLabels.push_back(coloredLabel);
-        group.coloredValues.push_back(coloredValue);
+        group.coloredIcons.push_back(std::move(coloredIcon));
+        group.coloredLabels.push_back(std::move(coloredLabel));
+        group.coloredValues.push_back(std::move(coloredValue));
 
         // Don't include value width for autoWrap rows - they will wrap to fit available width
         if (!row.autoWrap)

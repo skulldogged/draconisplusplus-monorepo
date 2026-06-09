@@ -111,6 +111,7 @@
 
       mesonFlags = [
         "-Dbuild_examples=false"
+        "-Db_lto=true"
         (lib.optionalString stdenv.isLinux "-Duse_linked_pci_ids=true")
       ];
 

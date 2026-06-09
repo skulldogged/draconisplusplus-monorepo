@@ -340,23 +340,34 @@ namespace draconis::cli {
     // Get all system info as a map
     Map<String, String> infoMap = data.toMap();
 
-    // Generic placeholder substitution: replace all {key} with values from the map
-    String output = templateStr;
-    for (const auto& [key, value] : infoMap) {
-      String placeholder = std::format("{{{}}}", key);
-      usize  pos         = 0;
-      while ((pos = output.find(placeholder, pos)) != String::npos)
-        output.replace(pos, placeholder.length(), value);
-    }
+    // Single-pass placeholder substitution: replace each {key} with its value
+    // from the map, dropping unmatched placeholders.
+    String output;
+    output.reserve(templateStr.size() + 64);
 
-    // Remove any remaining unmatched placeholders (keys that weren't in the map)
-    usize pos = 0;
-    while ((pos = output.find('{', pos)) != String::npos) {
-      usize endPos = output.find('}', pos);
-      if (endPos != String::npos)
-        output.replace(pos, endPos - pos + 1, "");
-      else
+    const StringView templ(templateStr);
+
+    for (usize pos = 0; pos < templ.size();) {
+      const usize bracePos = templ.find('{', pos);
+
+      if (bracePos == StringView::npos) {
+        output += templ.substr(pos);
         break;
+      }
+
+      output += templ.substr(pos, bracePos - pos);
+
+      const usize endPos = templ.find('}', bracePos);
+
+      if (endPos == StringView::npos) {
+        output += templ.substr(bracePos);
+        break;
+      }
+
+      if (const auto iter = infoMap.find(templ.substr(bracePos + 1, endPos - bracePos - 1)); iter != infoMap.end())
+        output += iter->second;
+
+      pos = endPos + 1;
     }
 
     Println("{}", output);

@@ -90,7 +90,7 @@ namespace draconis::utils::localization {
       uint64_t         keyHash = hashKey(key);
       std::string_view result  = FindTranslation(keyHash, *m_currentMap);
       if (!result.empty()) { // Found translation
-        debug_log("Translation found for key '{}' in current language: '{}'", key, String(result));
+        debug_log("Translation found for key '{}' in current language: '{}'", key, result);
         return String(result);
       }
     }
@@ -98,7 +98,7 @@ namespace draconis::utils::localization {
     // Fallback to linear search if hash lookup fails (should rarely happen)
     if (m_currentTranslations) {
       String result = FindTranslationLinear(key, *m_currentTranslations);
-      if (result != String(key)) { // Found translation
+      if (result != key) { // Found translation
         debug_log("Translation found (linear) for key '{}' in current language: '{}'", key, result);
         return result;
       }
@@ -111,7 +111,7 @@ namespace draconis::utils::localization {
   auto TranslationManager::getWithFallback(StringView key) const -> String {
     // get() already handles current language, so just return that
     String result = get(key);
-    if (result != String(key)) {
+    if (result != key) {
       return result;
     }
 
@@ -130,7 +130,7 @@ namespace draconis::utils::localization {
     // Fallback to linear search
     if (m_currentTranslations) {
       String result = FindTranslationLinear(key, *m_currentTranslations);
-      return result != String(key);
+      return result != key;
     }
 
     return false;

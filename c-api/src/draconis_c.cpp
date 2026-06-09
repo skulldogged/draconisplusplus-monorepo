@@ -40,6 +40,13 @@ namespace {
 
     return nullptr;
   }
+
+#if DRAC_ENABLE_PLUGINS
+  auto GetPluginCacheDir() -> const std::filesystem::path& {
+    static const std::filesystem::path PLUGIN_CACHE_DIR = std::filesystem::temp_directory_path() / "draconis_plugins";
+    return PLUGIN_CACHE_DIR;
+  }
+#endif
 } // namespace
 
 struct DracCacheManager {
@@ -535,7 +542,7 @@ extern "C" {
     if (!path)
       return;
   #if DRAC_PRECOMPILED_CONFIG
-      // Static plugins don't use search paths
+        // Static plugins don't use search paths
   #else
     GetPluginManager().addSearchPath(std::filesystem::path(path));
   #endif
@@ -632,7 +639,7 @@ extern "C" {
       return DRAC_ERROR_INVALID_ARGUMENT;
 
     PluginContext ctx;
-    PluginCache   pluginCache(std::filesystem::temp_directory_path() / "draconis_plugins");
+    PluginCache   pluginCache(GetPluginCacheDir());
     Result<Unit>  result = plugin->inner->initialize(ctx, pluginCache);
 
     if (result.has_value())
@@ -674,7 +681,7 @@ extern "C" {
     if (!plugin || !plugin->inner || !cache)
       return DRAC_ERROR_INVALID_ARGUMENT;
 
-    PluginCache  pluginCache(std::filesystem::temp_directory_path() / "draconis_plugins");
+    PluginCache  pluginCache(GetPluginCacheDir());
     Result<Unit> result = plugin->inner->collectData(pluginCache);
 
     if (result.has_value())

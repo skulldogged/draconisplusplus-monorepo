@@ -5,10 +5,44 @@
 #include "draconis_c.h"
 
 namespace {
+  // Class and method IDs resolved once in JNI_OnLoad. FindClass/GetMethodID
+  // are comparatively expensive JNI calls; doing them per native call (and
+  // per array element) adds avoidable overhead.
+  struct JniCache {
+    jclass    diskClass      = nullptr;
+    jmethodID diskCtor       = nullptr;
+    jclass    displayClass   = nullptr;
+    jmethodID displayCtor    = nullptr;
+    jclass    ifaceClass     = nullptr;
+    jmethodID ifaceCtor      = nullptr;
+    jclass    mapClass       = nullptr;
+    jmethodID mapCtor        = nullptr;
+    jmethodID mapPut         = nullptr;
+    jclass    stringClass    = nullptr;
+    jclass    runtimeExClass = nullptr;
+  };
+
+  JniCache gJniCache; // NOLINT(readability-identifier-naming)
+
+  auto loadGlobalClass(JNIEnv* env, const char* name) -> jclass {
+    jclass local = env->FindClass(name);
+    if (!local) {
+      env->ExceptionClear();
+      return nullptr;
+    }
+    auto global = static_cast<jclass>(env->NewGlobalRef(local));
+    env->DeleteLocalRef(local);
+    return global;
+  }
+
+  auto getClass(JNIEnv* env, jclass cached, const char* name) -> jclass {
+    return cached ? cached : env->FindClass(name);
+  }
+
   auto throwOnError(JNIEnv* env, DracErrorCode code, const char* context) -> void {
     if (code == DRAC_SUCCESS)
       return;
-    jclass exClass = env->FindClass("java/lang/RuntimeException");
+    jclass exClass = getClass(env, gJniCache.runtimeExClass, "java/lang/RuntimeException");
     if (!exClass)
       return;
     std::string msg = std::string(context) + " failed with code " + std::to_string((int)code);
@@ -48,6 +82,37 @@ namespace {
 
 // NOLINTBEGIN(readability-identifier-naming)
 extern "C" {
+  JNIEXPORT auto JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) -> jint {
+    JNIEnv* env = nullptr;
+    if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK)
+      return JNI_ERR;
+
+    constexpr const char* diskCtorSig  = "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JJZ)V";
+    constexpr const char* ifaceCtorSig = "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZZ)V";
+
+    gJniCache.diskClass      = loadGlobalClass(env, "draconis/DiskInfo");
+    gJniCache.displayClass   = loadGlobalClass(env, "draconis/DisplayInfo");
+    gJniCache.ifaceClass     = loadGlobalClass(env, "draconis/NetworkInterface");
+    gJniCache.mapClass       = loadGlobalClass(env, "java/util/HashMap");
+    gJniCache.stringClass    = loadGlobalClass(env, "java/lang/String");
+    gJniCache.runtimeExClass = loadGlobalClass(env, "java/lang/RuntimeException");
+
+    if (gJniCache.diskClass)
+      gJniCache.diskCtor = env->GetMethodID(gJniCache.diskClass, "<init>", diskCtorSig);
+    if (gJniCache.displayClass)
+      gJniCache.displayCtor = env->GetMethodID(gJniCache.displayClass, "<init>", "(JJJDZ)V");
+    if (gJniCache.ifaceClass)
+      gJniCache.ifaceCtor = env->GetMethodID(gJniCache.ifaceClass, "<init>", ifaceCtorSig);
+    if (gJniCache.mapClass) {
+      gJniCache.mapCtor = env->GetMethodID(gJniCache.mapClass, "<init>", "()V");
+      gJniCache.mapPut  = env->GetMethodID(gJniCache.mapClass, "put", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
+    }
+
+    env->ExceptionClear();
+
+    return JNI_VERSION_1_6;
+  }
+
   JNIEXPORT auto JNICALL Java_draconis_CacheManager_nativeCreateManager(JNIEnv* /*env*/, jobject /*obj*/) -> jlong {
     DracCacheManager* mgr = DracCreateCacheManager();
     return toHandle(mgr);
@@ -106,7 +171,7 @@ extern "C" {
     if (env->ExceptionCheck())
       return nullptr;
 
-    jclass       stringClass = env->FindClass("java/lang/String");
+    jclass       stringClass = getClass(env, gJniCache.stringClass, "java/lang/String");
     jobjectArray arr         = env->NewObjectArray(3, stringClass, nullptr);
 
     if (info.name)
@@ -179,11 +244,9 @@ extern "C" {
     if (env->ExceptionCheck())
       return nullptr;
 
-    jclass    diskClass = env->FindClass("draconis/DiskInfo");
-    jmethodID ctor      = env->GetMethodID(
-      diskClass, "<init>", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JJZ)V"
-    );
-    jobjectArray arr = env->NewObjectArray((jsize)list.count, diskClass, nullptr);
+    jclass       diskClass = getClass(env, gJniCache.diskClass, "draconis/DiskInfo");
+    jmethodID    ctor      = gJniCache.diskCtor ? gJniCache.diskCtor : env->GetMethodID(diskClass, "<init>", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JJZ)V");
+    jobjectArray arr       = env->NewObjectArray((jsize)list.count, diskClass, nullptr);
 
     auto items = std::span(list.items, list.count);
     for (size_t i = 0; i < items.size(); ++i) {
@@ -206,11 +269,9 @@ extern "C" {
     if (env->ExceptionCheck())
       return nullptr;
 
-    jclass    diskClass = env->FindClass("draconis/DiskInfo");
-    jmethodID ctor      = env->GetMethodID(
-      diskClass, "<init>", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JJZ)V"
-    );
-    jobject obj = env->NewObject(
+    jclass    diskClass = getClass(env, gJniCache.diskClass, "draconis/DiskInfo");
+    jmethodID ctor      = gJniCache.diskCtor ? gJniCache.diskCtor : env->GetMethodID(diskClass, "<init>", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JJZ)V");
+    jobject   obj       = env->NewObject(
       diskClass, ctor, toJString(env, disk.name), toJString(env, disk.mountPoint), toJString(env, disk.filesystem), toJString(env, disk.driveType), (jlong)disk.totalBytes, (jlong)disk.usedBytes, (jboolean)disk.isSystemDrive
     );
     DracFreeDiskInfo(&disk);
@@ -225,8 +286,8 @@ extern "C" {
     if (env->ExceptionCheck())
       return nullptr;
 
-    jclass       displayClass = env->FindClass("draconis/DisplayInfo");
-    jmethodID    ctor         = env->GetMethodID(displayClass, "<init>", "(JJJDZ)V");
+    jclass       displayClass = getClass(env, gJniCache.displayClass, "draconis/DisplayInfo");
+    jmethodID    ctor         = gJniCache.displayCtor ? gJniCache.displayCtor : env->GetMethodID(displayClass, "<init>", "(JJJDZ)V");
     jobjectArray arr          = env->NewObjectArray((jsize)list.count, displayClass, nullptr);
 
     auto items = std::span(list.items, list.count);
@@ -250,8 +311,8 @@ extern "C" {
     if (env->ExceptionCheck())
       return nullptr;
 
-    jclass    displayClass = env->FindClass("draconis/DisplayInfo");
-    jmethodID ctor         = env->GetMethodID(displayClass, "<init>", "(JJJDZ)V");
+    jclass    displayClass = getClass(env, gJniCache.displayClass, "draconis/DisplayInfo");
+    jmethodID ctor         = gJniCache.displayCtor ? gJniCache.displayCtor : env->GetMethodID(displayClass, "<init>", "(JJJDZ)V");
     return env->NewObject(
       displayClass, ctor, (jlong)display.id, (jlong)display.width, (jlong)display.height, (jdouble)display.refreshRate, (jboolean)display.isPrimary
     );
@@ -265,11 +326,9 @@ extern "C" {
     if (env->ExceptionCheck())
       return nullptr;
 
-    jclass    ifaceClass = env->FindClass("draconis/NetworkInterface");
-    jmethodID ctor       = env->GetMethodID(
-      ifaceClass, "<init>", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZZ)V"
-    );
-    jobjectArray arr = env->NewObjectArray((jsize)list.count, ifaceClass, nullptr);
+    jclass       ifaceClass = getClass(env, gJniCache.ifaceClass, "draconis/NetworkInterface");
+    jmethodID    ctor       = gJniCache.ifaceCtor ? gJniCache.ifaceCtor : env->GetMethodID(ifaceClass, "<init>", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZZ)V");
+    jobjectArray arr        = env->NewObjectArray((jsize)list.count, ifaceClass, nullptr);
 
     auto items = std::span(list.items, list.count);
     for (size_t i = 0; i < items.size(); ++i) {
@@ -292,11 +351,9 @@ extern "C" {
     if (env->ExceptionCheck())
       return nullptr;
 
-    jclass    ifaceClass = env->FindClass("draconis/NetworkInterface");
-    jmethodID ctor       = env->GetMethodID(
-      ifaceClass, "<init>", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZZ)V"
-    );
-    jobject obj = env->NewObject(
+    jclass    ifaceClass = getClass(env, gJniCache.ifaceClass, "draconis/NetworkInterface");
+    jmethodID ctor       = gJniCache.ifaceCtor ? gJniCache.ifaceCtor : env->GetMethodID(ifaceClass, "<init>", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZZ)V");
+    jobject   obj        = env->NewObject(
       ifaceClass, ctor, toJString(env, iface.name), toJString(env, iface.ipv4Address), toJString(env, iface.ipv6Address), toJString(env, iface.macAddress), (jboolean)iface.isUp, (jboolean)iface.isLoopback
     );
     DracFreeNetworkInterface(&iface);
@@ -335,9 +392,11 @@ extern "C" {
   }
 
   JNIEXPORT auto JNICALL Java_draconis_Plugin_nativeLoad(JNIEnv* env, jclass /*cls*/, jstring name) -> jlong {
-    if (!name) return 0;
+    if (!name)
+      return 0;
     const char* cname = env->GetStringUTFChars(name, nullptr);
-    if (!cname) return 0;
+    if (!cname)
+      return 0;
     DracPlugin* plugin = DracLoadPlugin(cname);
     env->ReleaseStringUTFChars(name, cname);
     return toHandle(plugin);
@@ -359,13 +418,15 @@ extern "C" {
 
   JNIEXPORT auto JNICALL Java_draconis_Plugin_nativeIsEnabled(JNIEnv* /*env*/, jobject /*obj*/, jlong handle) -> jboolean {
     auto* plugin = fromHandle<DracPlugin>(handle);
-    if (!plugin) return JNI_FALSE;
+    if (!plugin)
+      return JNI_FALSE;
     return DracPluginIsEnabled(plugin) ? JNI_TRUE : JNI_FALSE;
   }
 
   JNIEXPORT auto JNICALL Java_draconis_Plugin_nativeIsReady(JNIEnv* /*env*/, jobject /*obj*/, jlong handle) -> jboolean {
     auto* plugin = fromHandle<DracPlugin>(handle);
-    if (!plugin) return JNI_FALSE;
+    if (!plugin)
+      return JNI_FALSE;
     return DracPluginIsReady(plugin) ? JNI_TRUE : JNI_FALSE;
   }
 
@@ -379,33 +440,36 @@ extern "C" {
 
   JNIEXPORT auto JNICALL Java_draconis_Plugin_nativeGetJson(JNIEnv* env, jobject /*obj*/, jlong handle) -> jstring {
     auto* plugin = fromHandle<DracPlugin>(handle);
-    if (!plugin) return nullptr;
+    if (!plugin)
+      return nullptr;
     char* json = DracPluginGetJson(plugin);
-    if (!json) return nullptr;
+    if (!json)
+      return nullptr;
     jstring result = toJString(env, json);
     DracFreeString(json);
     return result;
   }
 
-  JNIEXPORT auto JNICALL Java_draconis_Plugin_nativeGetFields(JNIEnv* env, jobject /*obj*/, jlong handle) -> jobjectArray {
+  JNIEXPORT auto JNICALL Java_draconis_Plugin_nativeGetFields(JNIEnv* env, jobject /*obj*/, jlong handle) -> jobject {
     auto* plugin = fromHandle<DracPlugin>(handle);
-    if (!plugin) return nullptr;
+    if (!plugin)
+      return nullptr;
     DracPluginFieldList fields = DracPluginGetFields(plugin);
     if (!fields.items || fields.count == 0) {
-      jclass mapClass = env->FindClass("java/util/HashMap");
-      jmethodID ctor  = env->GetMethodID(mapClass, "<init>", "()V");
+      jclass    mapClass = getClass(env, gJniCache.mapClass, "java/util/HashMap");
+      jmethodID ctor     = gJniCache.mapCtor ? gJniCache.mapCtor : env->GetMethodID(mapClass, "<init>", "()V");
       return env->NewObject(mapClass, ctor);
     }
 
-    jclass    mapClass = env->FindClass("java/util/HashMap");
-    jmethodID mapCtor  = env->GetMethodID(mapClass, "<init>", "()V");
-    jmethodID put      = env->GetMethodID(mapClass, "put", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
+    jclass    mapClass = getClass(env, gJniCache.mapClass, "java/util/HashMap");
+    jmethodID mapCtor  = gJniCache.mapCtor ? gJniCache.mapCtor : env->GetMethodID(mapClass, "<init>", "()V");
+    jmethodID put      = gJniCache.mapPut ? gJniCache.mapPut : env->GetMethodID(mapClass, "put", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
     jobject   map      = env->NewObject(mapClass, mapCtor);
 
     for (size_t i = 0; i < fields.count; ++i) {
       const auto& field = fields.items[i];
-      jstring key       = field.key ? toJString(env, field.key) : nullptr;
-      jstring value     = field.value ? toJString(env, field.value) : nullptr;
+      jstring     key   = field.key ? toJString(env, field.key) : nullptr;
+      jstring     value = field.value ? toJString(env, field.value) : nullptr;
       if (key && value)
         env->CallObjectMethod(map, put, key, value);
     }
@@ -416,26 +480,32 @@ extern "C" {
 
   JNIEXPORT auto JNICALL Java_draconis_Plugin_nativeGetLastError(JNIEnv* env, jobject /*obj*/, jlong handle) -> jstring {
     auto* plugin = fromHandle<DracPlugin>(handle);
-    if (!plugin) return nullptr;
+    if (!plugin)
+      return nullptr;
     char* err = DracPluginGetLastError(plugin);
-    if (!err) return nullptr;
+    if (!err)
+      return nullptr;
     jstring result = toJString(env, err);
     DracFreeString(err);
     return result;
   }
 
   JNIEXPORT void JNICALL Java_draconis_PluginSystem_nativeAddPluginSearchPath(JNIEnv* env, jclass /*cls*/, jstring path) {
-    if (!path) return;
+    if (!path)
+      return;
     const char* cpath = env->GetStringUTFChars(path, nullptr);
-    if (!cpath) return;
+    if (!cpath)
+      return;
     DracAddPluginSearchPath(cpath);
     env->ReleaseStringUTFChars(path, cpath);
   }
 
   JNIEXPORT auto JNICALL Java_draconis_Plugin_nativeLoadFromPath(JNIEnv* env, jclass /*cls*/, jstring path) -> jlong {
-    if (!path) return 0;
+    if (!path)
+      return 0;
     const char* cpath = env->GetStringUTFChars(path, nullptr);
-    if (!cpath) return 0;
+    if (!cpath)
+      return 0;
     DracPlugin* plugin = DracLoadPluginFromPath(cpath);
     env->ReleaseStringUTFChars(path, cpath);
     return toHandle(plugin);

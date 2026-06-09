@@ -43,9 +43,9 @@ build:
 build-verbose:
     meson compile -C {{build_dir}} -v
 
-# Build in release mode
+# Build in release mode (with link-time optimization)
 release:
-    meson setup {{build_dir}} --buildtype=release --reconfigure
+    meson setup {{build_dir}} --buildtype=release -Db_lto=true --reconfigure
     meson compile -C {{build_dir}}
 
 # ===================== #

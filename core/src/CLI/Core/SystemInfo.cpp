@@ -1,5 +1,7 @@
 #include "SystemInfo.hpp"
 
+#include <future>
+
 #include <Drac++/Core/System.hpp>
 
 #if DRAC_ENABLE_PLUGINS
@@ -82,36 +84,47 @@ namespace draconis::core::system {
       return value;
     };
 
-    debug_log("SystemInfo: Getting desktop environment");
-    this->desktopEnv = GetDesktopEnvironment(cache);
-    debug_log("SystemInfo: Getting window manager");
-    this->windowMgr = GetWindowManager(cache);
-    debug_log("SystemInfo: Getting operating system");
-    this->operatingSystem = GetOperatingSystem(cache);
-    debug_log("SystemInfo: Getting kernel version");
-    this->kernelVersion = GetKernelVersion(cache);
-    debug_log("SystemInfo: Getting host");
-    this->host = GetHost(cache);
-    debug_log("SystemInfo: Getting CPU model");
-    this->cpuModel = replaceTrademarkSymbols(GetCPUModel(cache));
-    debug_log("SystemInfo: Getting CPU cores");
-    this->cpuCores = GetCPUCores(cache);
-    debug_log("SystemInfo: Getting GPU model");
-    this->gpuModel = GetGPUModel(cache);
-    debug_log("SystemInfo: Getting shell");
-    this->shell = GetShell(cache);
-    debug_log("SystemInfo: Getting memory info");
-    this->memInfo = GetMemInfo(cache);
-    debug_log("SystemInfo: Getting disk usage");
-    this->diskUsage = GetDiskUsage(cache);
-    debug_log("SystemInfo: Getting uptime");
-    this->uptime = GetUptime();
-    debug_log("SystemInfo: Getting date");
-    this->date = GetDate();
+    // All readouts are independent, so fetch them concurrently. The cache
+    // manager only locks around its in-memory map, so parallel fetchers do
+    // not serialize on it.
+    debug_log("SystemInfo: Fetching system data in parallel");
+
+    auto desktopEnvFut      = std::async(std::launch::async, [&cache] { return GetDesktopEnvironment(cache); });
+    auto windowMgrFut       = std::async(std::launch::async, [&cache] { return GetWindowManager(cache); });
+    auto operatingSystemFut = std::async(std::launch::async, [&cache] { return GetOperatingSystem(cache); });
+    auto kernelVersionFut   = std::async(std::launch::async, [&cache] { return GetKernelVersion(cache); });
+    auto hostFut            = std::async(std::launch::async, [&cache] { return GetHost(cache); });
+    auto cpuModelFut        = std::async(std::launch::async, [&cache] { return GetCPUModel(cache); });
+    auto cpuCoresFut        = std::async(std::launch::async, [&cache] { return GetCPUCores(cache); });
+    auto gpuModelFut        = std::async(std::launch::async, [&cache] { return GetGPUModel(cache); });
+    auto shellFut           = std::async(std::launch::async, [&cache] { return GetShell(cache); });
+    auto memInfoFut         = std::async(std::launch::async, [&cache] { return GetMemInfo(cache); });
+    auto diskUsageFut       = std::async(std::launch::async, [&cache] { return GetDiskUsage(cache); });
 
 #if DRAC_ENABLE_PACKAGECOUNT
-    debug_log("SystemInfo: Getting package count");
-    this->packageCount = draconis::services::packages::GetTotalCount(cache, config.enabledPackageManagers);
+    auto packageCountFut = std::async(std::launch::async, [&cache, &config] {
+      return draconis::services::packages::GetTotalCount(cache, config.enabledPackageManagers);
+    });
+#endif
+
+    // Uptime and date are trivial; fetch them on this thread while the others run.
+    this->uptime = GetUptime();
+    this->date   = GetDate();
+
+    this->desktopEnv      = desktopEnvFut.get();
+    this->windowMgr       = windowMgrFut.get();
+    this->operatingSystem = operatingSystemFut.get();
+    this->kernelVersion   = kernelVersionFut.get();
+    this->host            = hostFut.get();
+    this->cpuModel        = replaceTrademarkSymbols(cpuModelFut.get());
+    this->cpuCores        = cpuCoresFut.get();
+    this->gpuModel        = gpuModelFut.get();
+    this->shell           = shellFut.get();
+    this->memInfo         = memInfoFut.get();
+    this->diskUsage       = diskUsageFut.get();
+
+#if DRAC_ENABLE_PACKAGECOUNT
+    this->packageCount = packageCountFut.get();
 #endif
 
 #if DRAC_ENABLE_PLUGINS
@@ -188,7 +201,7 @@ namespace draconis::core::system {
       data["packages"] = std::to_string(*packageCount);
 #endif
 
-    // Plugin data - flatten with plugin_<pluginId>_<fieldName> format for compact templates
+      // Plugin data - flatten with plugin_<pluginId>_<fieldName> format for compact templates
 #if DRAC_ENABLE_PLUGINS
     for (const auto& [pluginId, fields] : pluginData)
       for (const auto& [fieldName, value] : fields)

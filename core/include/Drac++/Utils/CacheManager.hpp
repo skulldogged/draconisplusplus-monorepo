@@ -3,6 +3,7 @@
 #include <chrono>
 #include <filesystem>
 #include <glaze/glaze.hpp>
+#include <thread>
 
 #include "DataTypes.hpp"
 #include "Env.hpp"
@@ -73,7 +74,8 @@ namespace draconis::utils::cache {
 #endif
     }
 
-    CacheManager() : m_globalPolicy { .location = CacheLocation::Persistent, .ttl = days(1) } {}
+    CacheManager()
+      : m_globalPolicy { .location = CacheLocation::Persistent, .ttl = days(1) } {}
 
     auto setGlobalPolicy(const CachePolicy& policy) -> types::Unit {
       types::LockGuard lock(m_cacheMutex);
@@ -97,34 +99,50 @@ namespace draconis::utils::cache {
         if (ignoreCache)
           return fetcher();
 
-        types::LockGuard lock(m_cacheMutex);
+        // The mutex only guards the in-memory map; fetchers and disk I/O run
+        // unlocked so concurrent getOrSet calls for different keys don't
+        // serialize on a single global lock.
+        CachePolicy policy;
 
-        const CachePolicy& policy = overridePolicy.value_or(m_globalPolicy);
+        {
+          types::LockGuard lock(m_cacheMutex);
 
-        // 1. Check in-memory cache
-        if (const auto iter = m_inMemoryCache.find(key); iter != m_inMemoryCache.end())
-          if (
-            CacheEntry<T> entry; glz::read_beve(entry, iter->second.first) == glz::error_code::none &&
-            (!entry.expires.has_value() || system_clock::now() < system_clock::time_point(seconds(*entry.expires)))
-          )
-            return entry.data;
+          policy = overridePolicy.value_or(m_globalPolicy);
+
+          // 1. Check in-memory cache
+          if (const auto iter = m_inMemoryCache.find(key); iter != m_inMemoryCache.end())
+            if (
+              CacheEntry<T> entry; glz::read_beve(entry, iter->second.first) == glz::error_code::none &&
+              (!entry.expires.has_value() || system_clock::now() < system_clock::time_point(seconds(*entry.expires)))
+            )
+              return entry.data;
+        }
 
         // 2. Check filesystem cache
         const types::Option<fs::path> filePath = getCacheFilePath(key, policy.location);
 
-        if (filePath && fs::exists(*filePath)) {
-          if (std::ifstream ifs(*filePath, std::ios::binary); ifs) {
-            std::string fileContents((std::istreambuf_iterator<char>(ifs)), {});
+        if (filePath) {
+          std::error_code statErr;
 
-            CacheEntry<T> entry;
+          if (const auto fileSize = fs::file_size(*filePath, statErr); !statErr && fileSize > 0) {
+            if (std::ifstream ifs(*filePath, std::ios::binary); ifs) {
+              std::string fileContents(fileSize, '\0');
 
-            if (glz::read_beve(entry, fileContents) == glz::error_code::none) {
-              if (!entry.expires.has_value() || system_clock::now() < system_clock::time_point(seconds(*entry.expires))) {
-                system_clock::time_point expiryTp = entry.expires.has_value() ? system_clock::time_point(seconds(*entry.expires)) : system_clock::time_point::max();
+              if (ifs.read(fileContents.data(), static_cast<std::streamsize>(fileSize))) {
+                CacheEntry<T> entry;
 
-                m_inMemoryCache[key] = { fileContents, expiryTp };
+                if (glz::read_beve(entry, fileContents) == glz::error_code::none) {
+                  if (!entry.expires.has_value() || system_clock::now() < system_clock::time_point(seconds(*entry.expires))) {
+                    system_clock::time_point expiryTp = entry.expires.has_value() ? system_clock::time_point(seconds(*entry.expires)) : system_clock::time_point::max();
 
-                return entry.data;
+                    {
+                      types::LockGuard lock(m_cacheMutex);
+                      m_inMemoryCache[key] = { std::move(fileContents), expiryTp };
+                    }
+
+                    return entry.data;
+                  }
+                }
               }
             }
           }
@@ -157,15 +175,30 @@ namespace draconis::utils::cache {
           ? system_clock::time_point(seconds(*expiryTs))
           : system_clock::time_point::max();
 
-        m_inMemoryCache[key] = { binaryBuffer, inMemoryExpiryTp };
+        {
+          types::LockGuard lock(m_cacheMutex);
+          m_inMemoryCache[key] = { binaryBuffer, inMemoryExpiryTp };
+        }
 
         if (policy.location != CacheLocation::InMemory && filePath) {
           std::error_code errc;
           fs::create_directories(filePath->parent_path(), errc);
           if (!errc) {
-            if (std::ofstream ofs(*filePath, std::ios::binary | std::ios::trunc); ofs.is_open()) {
-              ofs.write(binaryBuffer.data(), static_cast<std::streamsize>(binaryBuffer.size()));
-            }
+            // Write to a temp file and rename so concurrent readers never see
+            // a partially-written cache entry.
+            fs::path tmpPath = *filePath;
+            tmpPath += std::format(".tmp{}", std::hash<std::thread::id> {}(std::this_thread::get_id()));
+
+            bool written = false;
+            if (std::ofstream ofs(tmpPath, std::ios::binary | std::ios::trunc); ofs.is_open())
+              written = static_cast<bool>(ofs.write(binaryBuffer.data(), static_cast<std::streamsize>(binaryBuffer.size())));
+
+            if (written) {
+              fs::rename(tmpPath, *filePath, errc);
+              if (errc)
+                fs::remove(tmpPath, errc);
+            } else
+              fs::remove(tmpPath, errc);
           }
         }
 

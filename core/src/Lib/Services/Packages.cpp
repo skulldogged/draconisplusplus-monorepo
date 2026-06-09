@@ -13,6 +13,7 @@
   #endif
 
   #include <filesystem>   // std::filesystem
+  #include <future>       // std::async
   #include <matchit.hpp>  // matchit::{match, is, or_, _}
   #include <system_error> // std::{errc, error_code}
 
@@ -64,12 +65,14 @@ namespace {
         ERR_FMT(ResourceExhausted, "Failed to create iterator for {} directory '{}': {} (resource exhausted or API unavailable)", pmId, dirPath.string(), fsErrCode.message());
 
       if (hasFilter) {
+        const fs::path filterPath(filter);
+
         for (const fs::directory_entry& entry : dirIter) {
           if (entry.path().empty())
             continue;
 
           if (std::error_code isFileErr; entry.is_regular_file(isFileErr) && !isFileErr) {
-            if (entry.path().extension().string() == filter)
+            if (entry.path().extension() == filterPath)
               count++;
           } else if (isFileErr)
             warn_log("Error stating entry '{}' in {} directory: {}", entry.path().string(), pmId, isFileErr.message());
@@ -259,6 +262,17 @@ namespace draconis::services::packages {
     u64  totalCount   = 0;
     bool oneSucceeded = false;
 
+    // Each package manager scans independent files/databases, so count them
+    // all concurrently.
+    using CountFn = Result<u64> (*)(CacheManager&);
+
+    Vec<Future<Result<u64>>> futures;
+    futures.reserve(8);
+
+    const auto launchCount = [&futures, &cache](CountFn countFn) {
+      futures.push_back(std::async(std::launch::async, [&cache, countFn] { return countFn(cache); }));
+    };
+
     const auto processResult = [&](const Result<u64>& result) {
       using matchit::match, matchit::is, matchit::or_, matchit::_;
 
@@ -275,52 +289,55 @@ namespace draconis::services::packages {
 
   #ifdef __linux__
     if (HasPackageManager(enabledPackageManagers, Manager::Apk))
-      processResult(CountApk(cache));
+      launchCount(CountApk);
     if (HasPackageManager(enabledPackageManagers, Manager::Dpkg))
-      processResult(CountDpkg(cache));
+      launchCount(CountDpkg);
     if (HasPackageManager(enabledPackageManagers, Manager::Moss))
-      processResult(CountMoss(cache));
+      launchCount(CountMoss);
     if (HasPackageManager(enabledPackageManagers, Manager::Pacman))
-      processResult(CountPacman(cache));
+      launchCount(CountPacman);
     if (HasPackageManager(enabledPackageManagers, Manager::Rpm))
-      processResult(CountRpm(cache));
+      launchCount(CountRpm);
     #ifdef HAVE_PUGIXML
     if (HasPackageManager(enabledPackageManagers, Manager::Xbps))
-      processResult(CountXbps(cache));
+      launchCount(CountXbps);
     #endif
   #elif defined(__APPLE__)
     if (HasPackageManager(enabledPackageManagers, Manager::Homebrew))
-      processResult(GetHomebrewCount(cache));
+      launchCount(GetHomebrewCount);
     if (HasPackageManager(enabledPackageManagers, Manager::Macports))
-      processResult(GetMacPortsCount(cache));
+      launchCount(GetMacPortsCount);
   #elif defined(_WIN32)
     if (HasPackageManager(enabledPackageManagers, Manager::Winget))
-      processResult(CountWinGet(cache));
+      launchCount(CountWinGet);
     if (HasPackageManager(enabledPackageManagers, Manager::Chocolatey))
-      processResult(CountChocolatey(cache));
+      launchCount(CountChocolatey);
     if (HasPackageManager(enabledPackageManagers, Manager::Scoop))
-      processResult(CountScoop(cache));
+      launchCount(CountScoop);
   #elif defined(__FreeBSD__) || defined(__DragonFly__)
     if (HasPackageManager(enabledPackageManagers, Manager::PkgNg))
-      processResult(GetPkgNgCount(cache));
+      launchCount(GetPkgNgCount);
   #elif defined(__NetBSD__)
     if (HasPackageManager(enabledPackageManagers, Manager::PkgSrc))
-      processResult(GetPkgSrcCount(cache));
+      launchCount(GetPkgSrcCount);
   #elif defined(__HAIKU__)
     if (HasPackageManager(enabledPackageManagers, Manager::HaikuPkg))
-      processResult(GetHaikuCount(cache));
+      launchCount(GetHaikuCount);
   #elif defined(__serenity__)
     if (HasPackageManager(enabledPackageManagers, Manager::Serenity))
-      processResult(GetSerenityCount(cache));
+      launchCount(GetSerenityCount);
   #endif
 
   #if defined(__linux__) || defined(__APPLE__)
     if (HasPackageManager(enabledPackageManagers, Manager::Nix))
-      processResult(CountNix(cache));
+      launchCount(CountNix);
   #endif
 
     if (HasPackageManager(enabledPackageManagers, Manager::Cargo))
-      processResult(CountCargo(cache));
+      launchCount(CountCargo);
+
+    for (Future<Result<u64>>& future : futures)
+      processResult(future.get());
 
     if (!oneSucceeded && totalCount == 0)
       ERR(UnavailableFeature, "No package managers found or none reported counts (feature not available)");
@@ -331,6 +348,15 @@ namespace draconis::services::packages {
   auto GetIndividualCounts(CacheManager& cache, const Manager enabledPackageManagers) -> Result<Map<String, u64>> {
     Map<String, u64> individualCounts;
     bool             oneSucceeded = false;
+
+    using CountFn = Result<u64> (*)(CacheManager&);
+
+    Vec<Pair<String, Future<Result<u64>>>> futures;
+    futures.reserve(8);
+
+    const auto launchCount = [&futures, &cache](const String& name, CountFn countFn) {
+      futures.emplace_back(name, std::async(std::launch::async, [&cache, countFn] { return countFn(cache); }));
+    };
 
     const auto processResult = [&](const String& name, const Result<u64>& result) {
       using matchit::match, matchit::is, matchit::or_, matchit::_;
@@ -348,52 +374,55 @@ namespace draconis::services::packages {
 
   #ifdef __linux__
     if (HasPackageManager(enabledPackageManagers, Manager::Apk))
-      processResult("apk", CountApk(cache));
+      launchCount("apk", CountApk);
     if (HasPackageManager(enabledPackageManagers, Manager::Dpkg))
-      processResult("dpkg", CountDpkg(cache));
+      launchCount("dpkg", CountDpkg);
     if (HasPackageManager(enabledPackageManagers, Manager::Moss))
-      processResult("moss", CountMoss(cache));
+      launchCount("moss", CountMoss);
     if (HasPackageManager(enabledPackageManagers, Manager::Pacman))
-      processResult("pacman", CountPacman(cache));
+      launchCount("pacman", CountPacman);
     if (HasPackageManager(enabledPackageManagers, Manager::Rpm))
-      processResult("rpm", CountRpm(cache));
+      launchCount("rpm", CountRpm);
     #ifdef HAVE_PUGIXML
     if (HasPackageManager(enabledPackageManagers, Manager::Xbps))
-      processResult("xbps", CountXbps(cache));
+      launchCount("xbps", CountXbps);
     #endif
   #elif defined(__APPLE__)
     if (HasPackageManager(enabledPackageManagers, Manager::Homebrew))
-      processResult("homebrew", GetHomebrewCount(cache));
+      launchCount("homebrew", GetHomebrewCount);
     if (HasPackageManager(enabledPackageManagers, Manager::Macports))
-      processResult("macports", GetMacPortsCount(cache));
+      launchCount("macports", GetMacPortsCount);
   #elif defined(_WIN32)
     if (HasPackageManager(enabledPackageManagers, Manager::Winget))
-      processResult("winget", CountWinGet(cache));
+      launchCount("winget", CountWinGet);
     if (HasPackageManager(enabledPackageManagers, Manager::Chocolatey))
-      processResult("chocolatey", CountChocolatey(cache));
+      launchCount("chocolatey", CountChocolatey);
     if (HasPackageManager(enabledPackageManagers, Manager::Scoop))
-      processResult("scoop", CountScoop(cache));
+      launchCount("scoop", CountScoop);
   #elif defined(__FreeBSD__) || defined(__DragonFly__)
     if (HasPackageManager(enabledPackageManagers, Manager::PkgNg))
-      processResult("pkgng", GetPkgNgCount(cache));
+      launchCount("pkgng", GetPkgNgCount);
   #elif defined(__NetBSD__)
     if (HasPackageManager(enabledPackageManagers, Manager::PkgSrc))
-      processResult("pkgsrc", GetPkgSrcCount(cache));
+      launchCount("pkgsrc", GetPkgSrcCount);
   #elif defined(__HAIKU__)
     if (HasPackageManager(enabledPackageManagers, Manager::HaikuPkg))
-      processResult("haikupkg", GetHaikuCount(cache));
+      launchCount("haikupkg", GetHaikuCount);
   #elif defined(__serenity__)
     if (HasPackageManager(enabledPackageManagers, Manager::Serenity))
-      processResult("serenity", GetSerenityCount(cache));
+      launchCount("serenity", GetSerenityCount);
   #endif
 
   #if defined(__linux__) || defined(__APPLE__)
     if (HasPackageManager(enabledPackageManagers, Manager::Nix))
-      processResult("nix", CountNix(cache));
+      launchCount("nix", CountNix);
   #endif
 
     if (HasPackageManager(enabledPackageManagers, Manager::Cargo))
-      processResult("cargo", CountCargo(cache));
+      launchCount("cargo", CountCargo);
+
+    for (auto& [name, future] : futures)
+      processResult(name, future.get());
 
     if (!oneSucceeded && individualCounts.empty())
       ERR(UnavailableFeature, "No enabled package managers for this platform.");

@@ -4,7 +4,6 @@
 #include <ctime>      // localtime_r/s, strftime, time_t, tm
 #include <filesystem> // std::filesystem::path
 #include <format>     // std::format
-#include <stack>      // std::stack for span tracking
 #include <utility>    // std::forward
 
 #ifdef _WIN32
@@ -197,29 +196,36 @@ namespace draconis::utils::logging {
   };
 
   /**
+   * @brief Appends ANSI-styled text to an existing buffer (avoids temporary strings).
+   */
+  inline auto StylizeTo(types::String& out, const types::StringView text, const Style& style) -> void {
+    const bool hasStyle = style.bold || style.italic || style.dim || style.color != LogColor::White;
+
+    if (!hasStyle) {
+      out += text;
+      return;
+    }
+
+    if (style.bold)
+      out += LogLevelConst::BOLD_START;
+    if (style.italic)
+      out += LogLevelConst::ITALIC_START;
+    if (style.dim)
+      out += LogLevelConst::DIM_START;
+    if (style.color != LogColor::White)
+      out += LogLevelConst::COLOR_CODE_LITERALS[static_cast<types::usize>(style.color)];
+
+    out += text;
+    out += LogLevelConst::RESET_CODE;
+  }
+
+  /**
    * @brief Applies ANSI styling to text based on the provided style options.
    */
   inline auto Stylize(const types::StringView text, const Style& style) -> types::String {
-    const bool hasStyle = style.bold || style.italic || style.dim || style.color != LogColor::White;
-
-    if (!hasStyle)
-      return types::String(text);
-
     types::String result;
     result.reserve(text.size() + 32);
-
-    if (style.bold)
-      result += LogLevelConst::BOLD_START;
-    if (style.italic)
-      result += LogLevelConst::ITALIC_START;
-    if (style.dim)
-      result += LogLevelConst::DIM_START;
-    if (style.color != LogColor::White)
-      result += LogLevelConst::COLOR_CODE_LITERALS.at(static_cast<types::usize>(style.color));
-
-    result += text;
-    result += LogLevelConst::RESET_CODE;
-
+    StylizeTo(result, text, style);
     return result;
   }
 
@@ -367,7 +373,7 @@ namespace draconis::utils::logging {
     for (types::usize i = 0; i < fields.size(); ++i) {
       if (i > 0)
         result += ", ";
-      result += Stylize(fields[i].key, { .bold = true });
+      StylizeTo(result, fields[i].key, { .bold = true });
       result += "=";
       result += fields[i].value;
     }
@@ -384,16 +390,16 @@ namespace draconis::utils::logging {
    * @brief Information about an active span.
    */
   struct SpanInfo {
-    types::String      name;
-    types::Vec<Field>  fields;
-    types::String      target;
+    types::String     name;
+    types::Vec<Field> fields;
+    types::String     target;
   };
 
   /**
    * @brief Gets the thread-local span stack.
    */
-  inline auto GetSpanStack() -> std::stack<SpanInfo>& {
-    thread_local std::stack<SpanInfo> SpanStackInstance;
+  inline auto GetSpanStack() -> types::Vec<SpanInfo>& {
+    thread_local types::Vec<SpanInfo> SpanStackInstance;
     return SpanStackInstance;
   }
 
@@ -402,36 +408,37 @@ namespace draconis::utils::logging {
    * @brief RAII guard that enters a span on construction and exits on destruction.
    */
   class SpanGuard {
-  public:
+   public:
     SpanGuard(types::String name, types::String target, types::Vec<Field> fields = {})
-        : m_active(true) {
-      GetSpanStack().push(SpanInfo { std::move(name), std::move(fields), std::move(target) });
+      : m_active(true) {
+      GetSpanStack().push_back(SpanInfo { std::move(name), std::move(fields), std::move(target) });
     }
 
     ~SpanGuard() {
       if (m_active && !GetSpanStack().empty())
-        GetSpanStack().pop();
+        GetSpanStack().pop_back();
     }
 
     // Non-copyable, movable
     SpanGuard(const SpanGuard&)                    = delete;
     auto operator=(const SpanGuard&) -> SpanGuard& = delete;
 
-    SpanGuard(SpanGuard&& other) noexcept : m_active(other.m_active) {
+    SpanGuard(SpanGuard&& other) noexcept
+      : m_active(other.m_active) {
       other.m_active = false;
     }
 
     auto operator=(SpanGuard&& other) noexcept -> SpanGuard& {
       if (this != &other) {
         if (m_active && !GetSpanStack().empty())
-          GetSpanStack().pop();
+          GetSpanStack().pop_back();
         m_active       = other.m_active;
         other.m_active = false;
       }
       return *this;
     }
 
-  private:
+   private:
     bool m_active;
   };
 
@@ -456,7 +463,7 @@ namespace draconis::utils::logging {
       return types::String(func.substr(0, parenPos));
 
     // Find where the namespace/class path starts (skip return type)
-    auto spacePos = func.rfind(' ', lastColonPos);
+    auto         spacePos = func.rfind(' ', lastColonPos);
     types::usize startPos = (spacePos != types::StringView::npos) ? spacePos + 1 : 0;
 
     return types::String(func.substr(startPos, lastColonPos - startPos));
@@ -499,74 +506,70 @@ namespace draconis::utils::logging {
     // Build fields string
     types::String fieldsStr = FormatFields(fields);
 
-    {
-      const types::LockGuard lock(GetLogMutex());
+    // Assemble the full event into one buffer so it hits the console with a
+    // single write instead of one write per fragment.
+    types::String out;
+    out.reserve(128 + message.size() + fieldsStr.size());
 
 #ifdef DRAC_PRETTY_LOG
-      // Pretty multi-line format (like tracing's Pretty formatter)
-      // Line 1: timestamp LEVEL target: message, fields
-      Print(level, "  ");
-      Print(level, Stylize(timestamp, { .color = LogColor::Gray, .dim = true }));
-      Print(level, " ");
-      Print(level, GetLevelInfo().at(static_cast<types::usize>(level)));
-      Print(level, " ");
-      Print(level, Stylize(target, { .bold = true }));
-      Print(level, ": ");
-      Print(level, message);
-      if (!fieldsStr.empty()) {
-        Print(level, ", ");
-        Print(level, fieldsStr);
+    // Pretty multi-line format (like tracing's Pretty formatter)
+    // Line 1: timestamp LEVEL target: message, fields
+    out += "  ";
+    StylizeTo(out, timestamp, { .color = LogColor::Gray, .dim = true });
+    out += ' ';
+    out += GetLevelInfo()[static_cast<types::usize>(level)];
+    out += ' ';
+    StylizeTo(out, target, { .bold = true });
+    out += ": ";
+    out += message;
+    if (!fieldsStr.empty()) {
+      out += ", ";
+      out += fieldsStr;
+    }
+    out += '\n';
+
+    // Line 2: at file:line
+    StylizeTo(out, LogLevelConst::AT_PREFIX, { .color = LogColor::Gray, .italic = true });
+    StylizeTo(out, fileLine, { .color = LogColor::Gray, .italic = true });
+    out += '\n';
+
+    // Lines 3+: in span_name with fields (outermost span first)
+    for (const SpanInfo& span : GetSpanStack()) {
+      StylizeTo(out, LogLevelConst::IN_PREFIX, { .color = LogColor::Gray, .italic = true });
+      StylizeTo(out, span.target, { .color = LogColor::Gray, .italic = true });
+      StylizeTo(out, "::", { .color = LogColor::Gray, .italic = true });
+      StylizeTo(out, span.name, { .bold = true, .color = LogColor::Gray });
+      if (!span.fields.empty()) {
+        StylizeTo(out, " with ", { .color = LogColor::Gray, .italic = true });
+        StylizeTo(out, FormatFields(span.fields), { .color = LogColor::Gray });
       }
-      Println(level);
+      out += '\n';
+    }
 
-      // Line 2: at file:line
-      Print(level, Stylize(LogLevelConst::AT_PREFIX, { .color = LogColor::Gray, .italic = true }));
-      Println(level, Stylize(fileLine, { .color = LogColor::Gray, .italic = true }));
-
-      // Lines 3+: in span_name with fields (for each span in stack)
-      auto& spanStack = GetSpanStack();
-      if (!spanStack.empty()) {
-        // We need to iterate from bottom to top, so copy to vector
-        std::stack<SpanInfo> tempStack = spanStack;
-        types::Vec<SpanInfo> spans;
-        while (!tempStack.empty()) {
-          spans.push_back(tempStack.top());
-          tempStack.pop();
-        }
-        // Reverse to get bottom-to-top order (outermost span first)
-        for (auto it = spans.rbegin(); it != spans.rend(); ++it) {
-          Print(level, Stylize(LogLevelConst::IN_PREFIX, { .color = LogColor::Gray, .italic = true }));
-          Print(level, Stylize(it->target, { .color = LogColor::Gray, .italic = true }));
-          Print(level, Stylize("::", { .color = LogColor::Gray, .italic = true }));
-          Print(level, Stylize(it->name, { .bold = true, .color = LogColor::Gray }));
-          if (!it->fields.empty()) {
-            Print(level, Stylize(" with ", { .color = LogColor::Gray, .italic = true }));
-            Print(level, Stylize(FormatFields(it->fields), { .color = LogColor::Gray }));
-          }
-          Println(level);
-        }
-      }
-
-      Println(level); // Empty line between events
+    out += '\n'; // Empty line between events
 #else
-      // Compact format: timestamp LEVEL file:line target: message, fields
-      Print(level, Stylize(timestamp, { .color = LogColor::Gray, .dim = true }));
-      Print(level, " ");
-      Print(level, GetLevelInfo().at(static_cast<types::usize>(level)));
-      Print(level, " ");
+    // Compact format: timestamp LEVEL file:line target: message, fields
+    StylizeTo(out, timestamp, { .color = LogColor::Gray, .dim = true });
+    out += ' ';
+    out += GetLevelInfo()[static_cast<types::usize>(level)];
+    out += ' ';
   #ifndef NDEBUG
-      Print(level, Stylize(fileLine, { .color = LogColor::Gray, .italic = true }));
-      Print(level, " ");
+    StylizeTo(out, fileLine, { .color = LogColor::Gray, .italic = true });
+    out += ' ';
   #endif
-      Print(level, Stylize(target, { .bold = true }));
-      Print(level, ": ");
-      Print(level, message);
-      if (!fieldsStr.empty()) {
-        Print(level, ", ");
-        Print(level, fieldsStr);
-      }
-      Println(level);
+    StylizeTo(out, target, { .bold = true });
+    out += ": ";
+    out += message;
+    if (!fieldsStr.empty()) {
+      out += ", ";
+      out += fieldsStr;
+    }
+    out += '\n';
 #endif
+
+    {
+      const types::LockGuard lock(GetLogMutex());
+      Print(level, out);
     }
   }
 
@@ -627,118 +630,133 @@ namespace draconis::utils::logging {
 #define field(name, value) ::draconis::utils::logging::Field::create(#name, value)
 
 // Span macros - create an RAII span guard
-#define span_enter(name, ...)                      \
-  auto _drac_span_guard_##__LINE__ =               \
-    ::draconis::utils::logging::SpanGuard(         \
-      #name,                                       \
-      DRAC_LOG_TARGET,                             \
+#define span_enter(name, ...)                                                          \
+  auto _drac_span_guard_##__LINE__ =                                                   \
+    ::draconis::utils::logging::SpanGuard(                                             \
+      #name,                                                                           \
+      DRAC_LOG_TARGET,                                                                 \
       ::draconis::utils::types::Vec<::draconis::utils::logging::Field> { __VA_ARGS__ } \
     )
 
 // Log macros with target and optional fields
-#define trace_log(fmt, ...) \
-  ::draconis::utils::logging::LogImpl( \
+#define trace_log(fmt, ...)                      \
+  ::draconis::utils::logging::LogImpl(           \
     ::draconis::utils::logging::LogLevel::Trace, \
-    std::source_location::current(), \
-    DRAC_LOG_TARGET, \
-    fmt __VA_OPT__(, ) __VA_ARGS__)
+    std::source_location::current(),             \
+    DRAC_LOG_TARGET,                             \
+    fmt __VA_OPT__(, ) __VA_ARGS__               \
+  )
 
-#define debug_log(fmt, ...) \
-  ::draconis::utils::logging::LogImpl( \
+#define debug_log(fmt, ...)                      \
+  ::draconis::utils::logging::LogImpl(           \
     ::draconis::utils::logging::LogLevel::Debug, \
-    std::source_location::current(), \
-    DRAC_LOG_TARGET, \
-    fmt __VA_OPT__(, ) __VA_ARGS__)
+    std::source_location::current(),             \
+    DRAC_LOG_TARGET,                             \
+    fmt __VA_OPT__(, ) __VA_ARGS__               \
+  )
 
-#define info_log(fmt, ...) \
-  ::draconis::utils::logging::LogImpl( \
+#define info_log(fmt, ...)                      \
+  ::draconis::utils::logging::LogImpl(          \
     ::draconis::utils::logging::LogLevel::Info, \
-    std::source_location::current(), \
-    DRAC_LOG_TARGET, \
-    fmt __VA_OPT__(, ) __VA_ARGS__)
+    std::source_location::current(),            \
+    DRAC_LOG_TARGET,                            \
+    fmt __VA_OPT__(, ) __VA_ARGS__              \
+  )
 
-#define warn_log(fmt, ...) \
-  ::draconis::utils::logging::LogImpl( \
+#define warn_log(fmt, ...)                      \
+  ::draconis::utils::logging::LogImpl(          \
     ::draconis::utils::logging::LogLevel::Warn, \
-    std::source_location::current(), \
-    DRAC_LOG_TARGET, \
-    fmt __VA_OPT__(, ) __VA_ARGS__)
+    std::source_location::current(),            \
+    DRAC_LOG_TARGET,                            \
+    fmt __VA_OPT__(, ) __VA_ARGS__              \
+  )
 
-#define error_log(fmt, ...) \
-  ::draconis::utils::logging::LogImpl( \
+#define error_log(fmt, ...)                      \
+  ::draconis::utils::logging::LogImpl(           \
     ::draconis::utils::logging::LogLevel::Error, \
-    std::source_location::current(), \
-    DRAC_LOG_TARGET, \
-    fmt __VA_OPT__(, ) __VA_ARGS__)
+    std::source_location::current(),             \
+    DRAC_LOG_TARGET,                             \
+    fmt __VA_OPT__(, ) __VA_ARGS__               \
+  )
 
 // Log with fields macros
-#define trace_log_fields(fields_vec, fmt, ...) \
-  ::draconis::utils::logging::LogImpl( \
+#define trace_log_fields(fields_vec, fmt, ...)   \
+  ::draconis::utils::logging::LogImpl(           \
     ::draconis::utils::logging::LogLevel::Trace, \
-    std::source_location::current(), \
-    DRAC_LOG_TARGET, \
-    fields_vec, \
-    fmt __VA_OPT__(, ) __VA_ARGS__)
+    std::source_location::current(),             \
+    DRAC_LOG_TARGET,                             \
+    fields_vec,                                  \
+    fmt __VA_OPT__(, ) __VA_ARGS__               \
+  )
 
-#define debug_log_fields(fields_vec, fmt, ...) \
-  ::draconis::utils::logging::LogImpl( \
+#define debug_log_fields(fields_vec, fmt, ...)   \
+  ::draconis::utils::logging::LogImpl(           \
     ::draconis::utils::logging::LogLevel::Debug, \
-    std::source_location::current(), \
-    DRAC_LOG_TARGET, \
-    fields_vec, \
-    fmt __VA_OPT__(, ) __VA_ARGS__)
+    std::source_location::current(),             \
+    DRAC_LOG_TARGET,                             \
+    fields_vec,                                  \
+    fmt __VA_OPT__(, ) __VA_ARGS__               \
+  )
 
-#define info_log_fields(fields_vec, fmt, ...) \
-  ::draconis::utils::logging::LogImpl( \
+#define info_log_fields(fields_vec, fmt, ...)   \
+  ::draconis::utils::logging::LogImpl(          \
     ::draconis::utils::logging::LogLevel::Info, \
-    std::source_location::current(), \
-    DRAC_LOG_TARGET, \
-    fields_vec, \
-    fmt __VA_OPT__(, ) __VA_ARGS__)
+    std::source_location::current(),            \
+    DRAC_LOG_TARGET,                            \
+    fields_vec,                                 \
+    fmt __VA_OPT__(, ) __VA_ARGS__              \
+  )
 
-#define warn_log_fields(fields_vec, fmt, ...) \
-  ::draconis::utils::logging::LogImpl( \
+#define warn_log_fields(fields_vec, fmt, ...)   \
+  ::draconis::utils::logging::LogImpl(          \
     ::draconis::utils::logging::LogLevel::Warn, \
-    std::source_location::current(), \
-    DRAC_LOG_TARGET, \
-    fields_vec, \
-    fmt __VA_OPT__(, ) __VA_ARGS__)
+    std::source_location::current(),            \
+    DRAC_LOG_TARGET,                            \
+    fields_vec,                                 \
+    fmt __VA_OPT__(, ) __VA_ARGS__              \
+  )
 
-#define error_log_fields(fields_vec, fmt, ...) \
-  ::draconis::utils::logging::LogImpl( \
+#define error_log_fields(fields_vec, fmt, ...)   \
+  ::draconis::utils::logging::LogImpl(           \
     ::draconis::utils::logging::LogLevel::Error, \
-    std::source_location::current(), \
-    DRAC_LOG_TARGET, \
-    fields_vec, \
-    fmt __VA_OPT__(, ) __VA_ARGS__)
+    std::source_location::current(),             \
+    DRAC_LOG_TARGET,                             \
+    fields_vec,                                  \
+    fmt __VA_OPT__(, ) __VA_ARGS__               \
+  )
 
 // Error object logging macros
-#define trace_at(error_obj) \
-  ::draconis::utils::logging::LogError( \
+#define trace_at(error_obj)                      \
+  ::draconis::utils::logging::LogError(          \
     ::draconis::utils::logging::LogLevel::Trace, \
-    DRAC_LOG_TARGET, \
-    error_obj)
+    DRAC_LOG_TARGET,                             \
+    error_obj                                    \
+  )
 
-#define debug_at(error_obj) \
-  ::draconis::utils::logging::LogError( \
+#define debug_at(error_obj)                      \
+  ::draconis::utils::logging::LogError(          \
     ::draconis::utils::logging::LogLevel::Debug, \
-    DRAC_LOG_TARGET, \
-    error_obj)
+    DRAC_LOG_TARGET,                             \
+    error_obj                                    \
+  )
 
-#define info_at(error_obj) \
-  ::draconis::utils::logging::LogError( \
+#define info_at(error_obj)                      \
+  ::draconis::utils::logging::LogError(         \
     ::draconis::utils::logging::LogLevel::Info, \
-    DRAC_LOG_TARGET, \
-    error_obj)
+    DRAC_LOG_TARGET,                            \
+    error_obj                                   \
+  )
 
-#define warn_at(error_obj) \
-  ::draconis::utils::logging::LogError( \
+#define warn_at(error_obj)                      \
+  ::draconis::utils::logging::LogError(         \
     ::draconis::utils::logging::LogLevel::Warn, \
-    DRAC_LOG_TARGET, \
-    error_obj)
+    DRAC_LOG_TARGET,                            \
+    error_obj                                   \
+  )
 
-#define error_at(error_obj) \
-  ::draconis::utils::logging::LogError( \
+#define error_at(error_obj)                      \
+  ::draconis::utils::logging::LogError(          \
     ::draconis::utils::logging::LogLevel::Error, \
-    DRAC_LOG_TARGET, \
-    error_obj)
+    DRAC_LOG_TARGET,                             \
+    error_obj                                    \
+  )
