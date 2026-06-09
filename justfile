@@ -88,6 +88,14 @@ clean:
 rebuild: clean build
 
 # ===================== #
+#   Plugins             #
+# ===================== #
+
+# Scaffold a new plugin in plugins/ (e.g., just new-plugin my_stats)
+new-plugin NAME:
+    python3 tools/plugin_helper.py new {{NAME}}
+
+# ===================== #
 #   Development         #
 # ===================== #
 

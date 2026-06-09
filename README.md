@@ -42,7 +42,7 @@ meson compile -C build
 ### With Static Plugins
 
 ```bash
-DRAC_STATIC_PLUGINS=now_playing meson setup build
+meson setup build -Dstatic_plugins=now_playing,weather   # or -Dstatic_plugins=all
 meson compile -C build
 ```
 
@@ -97,12 +97,33 @@ var mem = client.GetMemoryUsage();
 
 ## Plugin System
 
-Draconis++ supports both static and dynamic plugins:
+Plugins are self-contained directories with a `plugin.json` manifest,
+discovered automatically by the build — adding a plugin never requires
+editing build files. Every plugin builds both ways without source changes:
 
-- **Static plugins**: Compiled into the binary, registered at startup
-- **Dynamic plugins**: Loaded from shared libraries at runtime
+- **Static plugins**: Compiled into the binary (`-Dstatic_plugins=name1,name2` or `all`), registered and loaded automatically at startup
+- **Dynamic plugins**: Built as shared libraries (the default) and loaded at runtime from standard plugin directories
 
 ### Creating a Plugin
+
+```bash
+# Scaffold a working plugin in plugins/my_stats/ (or: just new-plugin my_stats)
+python3 tools/plugin_helper.py new my_stats
+
+# Build dynamically (default) or compile it into the binary
+meson setup build && meson compile -C build
+meson setup build -Dstatic_plugins=my_stats && meson compile -C build
+```
+
+User-made plugins can also live outside the repository — point the build at
+the directory containing them:
+
+```bash
+meson setup build -Dplugin_dirs=$HOME/draconis-plugins -Dstatic_plugins=all
+```
+
+A plugin is just a class implementing one of the plugin interfaces plus the
+`DRAC_PLUGIN()` registration macro:
 
 ```cpp
 #include <Drac++/Core/Plugin.hpp>
@@ -113,6 +134,9 @@ class MyPlugin : public draconis::core::plugin::IInfoProviderPlugin {
 
 DRAC_PLUGIN(MyPlugin)
 ```
+
+See [plugins/README.md](plugins/README.md) for the manifest schema and the
+full authoring guide.
 
 ## License
 

@@ -19,18 +19,68 @@ host_system = host_machine.system()
 fs = import('fs')
 
 # ============================== #
+#  Plugin Discovery              #
+# ============================== #
+
+# Plugins are self-contained directories containing a plugin.json manifest.
+# They are discovered from the bundled plugins/ directory plus any directories
+# passed via -Dplugin_dirs=. tools/plugin_helper.py is the single source of
+# truth for manifest parsing; see plugins/README.md for the manifest schema.
+python_prog = find_program('python3', 'python')
+plugin_helper = meson.project_source_root() / 'tools' / 'plugin_helper.py'
+
+plugin_search_dirs = [meson.project_source_root() / 'plugins']
+foreach extra_dir : get_option('plugin_dirs')
+  if fs.is_absolute(extra_dir)
+    plugin_search_dirs += extra_dir
+  else
+    plugin_search_dirs += meson.project_source_root() / extra_dir
+  endif
+endforeach
+
+# Map of plugin name -> absolute plugin directory
+discovered_plugins = {}
+plugin_discovery = run_command(python_prog, plugin_helper, 'discover', plugin_search_dirs, check: true)
+discovery_stdout = plugin_discovery.stdout().strip()
+if discovery_stdout != ''
+  foreach line : discovery_stdout.split('\n')
+    parts = line.split('|')
+    discovered_plugins += {parts[0].strip(): parts[1].strip()}
+  endforeach
+endif
+
+# Resolve the requested static plugins ('all' expands to every discovered plugin)
+static_plugin_list = []
+if get_option('static_plugins').contains('all')
+  foreach plugin_name, plugin_dir : discovered_plugins
+    static_plugin_list += plugin_name
+  endforeach
+else
+  foreach plugin_name : get_option('static_plugins')
+    if plugin_name not in discovered_plugins
+      error(
+        'Static plugin "@0@" was not found. Discovered plugins: @1@.\nAdd your plugin directory under plugins/, or pass its parent directory via -Dplugin_dirs=.'.format(
+          plugin_name,
+          ', '.join(discovered_plugins.keys()),
+        ),
+      )
+    endif
+    static_plugin_list += plugin_name
+  endforeach
+endif
+
+# ============================== #
 #  Subdirectories                #
 # ============================== #
 
-# Core library (always built)
+# Core library (always built; compiles static plugins directly)
 subdir('core')
 
 # C API (stable ABI layer, always built)
 subdir('c-api')
 
-# Plugins - only for dynamic plugin builds (static plugins handled in core)
-# For static plugins, the core library compiles them directly
-if get_option('plugins').allowed() and get_option('static_plugins').length() == 0
+# Dynamic plugin builds (static plugins are compiled into core instead)
+if get_option('plugins').allowed() and static_plugin_list.length() == 0
   subdir('plugins')
 endif
 
@@ -69,11 +119,16 @@ endif
 summary({
   'Core library': true,
   'C API': true,
-  'Plugins': get_option('plugins').allowed() or get_option('static_plugins').length() > 0,
+  'Plugins': get_option('plugins').allowed() or static_plugin_list.length() > 0,
   'CLI': get_option('build_cli'),
   'Examples': get_option('build_examples'),
   'Tests': get_option('build_tests'),
 }, section: 'Components', bool_yn: true)
+
+summary({
+  'Discovered': ', '.join(discovered_plugins.keys()),
+  'Static': static_plugin_list.length() > 0 ? ', '.join(static_plugin_list) : '(none)',
+}, section: 'Plugins')
 
 summary({
   'Rust': get_option('build_rust'),

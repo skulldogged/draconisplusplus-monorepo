@@ -18,10 +18,7 @@
   #include <Drac++/Utils/Error.hpp>
   #include <Drac++/Utils/Logging.hpp>
 
-  // Include static plugins header when using precompiled config
-  #if DRAC_PRECOMPILED_CONFIG
-    #include <Drac++/Core/StaticPlugins.hpp>
-  #endif
+  #include <Drac++/Core/StaticPlugins.hpp>
 
   #ifdef _WIN32
     #include <windows.h>
@@ -167,8 +164,18 @@ namespace draconis::core::plugin {
       }
     }
 
-    // Auto-load plugins from config
     CacheManager cache;
+
+    // Register and load statically linked plugins; they were compiled in
+    // deliberately, so they are always loaded up front.
+    if (const std::size_t staticCount = DracInitStaticPlugins(); staticCount > 0) {
+      debug_log("Registered {} static plugin(s)", staticCount);
+      for (const auto& [className, entry] : GetStaticPluginRegistry())
+        if (auto loadResult = loadPlugin(className, cache); !loadResult)
+          warn_log("Failed to load static plugin '{}': {}", className, loadResult.error().message);
+    }
+
+    // Auto-load plugins from config
     for (const auto& pluginName : config.autoLoad) {
       debug_log("Auto-loading plugin '{}' from config", pluginName);
       if (auto loadResult = loadPlugin(pluginName, cache); !loadResult)
@@ -247,7 +254,6 @@ namespace draconis::core::plugin {
       return {};
     }
 
-  #if DRAC_PRECOMPILED_CONFIG
     // Check if there's already a static plugin loaded with the same provider ID
     // This prevents loading a dynamic plugin when a static version is already active
     for (const auto& [loadedName, loadedPlugin] : m_plugins) {
@@ -270,7 +276,7 @@ namespace draconis::core::plugin {
       }
     }
 
-    // Try to load as a static plugin first (for precompiled config mode)
+    // Try to load as a static plugin first (registry is empty in dynamic-only builds)
     if (IsStaticPlugin(pluginName)) {
       debug_log("Loading static plugin '{}'", pluginName);
 
@@ -310,7 +316,6 @@ namespace draconis::core::plugin {
       debug_log("Static plugin '{}' loaded and initialized successfully.", pluginName);
       return {};
     }
-  #endif
 
     // Fall back to dynamic loading
     if (!m_discoveredPlugins.contains(pluginName))
@@ -400,7 +405,6 @@ namespace draconis::core::plugin {
 
     debug_log("Destroying plugin instance '{}'", pluginName);
 
-  #if DRAC_PRECOMPILED_CONFIG
     // Handle static plugins (identified by nullptr handle)
     if (loadedPlugin.handle == nullptr) {
       DestroyStaticPlugin(pluginName, loadedPlugin.instance.release());
@@ -408,7 +412,6 @@ namespace draconis::core::plugin {
       debug_log("Static plugin '{}' unloaded successfully.", pluginName);
       return {};
     }
-  #endif
 
     // Handle dynamic plugins
     if (auto destroyFuncResult = getDestroyPluginFunc(loadedPlugin.handle); destroyFuncResult) {

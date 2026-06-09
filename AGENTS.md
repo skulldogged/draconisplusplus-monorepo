@@ -152,13 +152,19 @@ c-api/                  # C API wrapper
   src/draconis_c.cpp
 ```
 
-## Static Plugin System
+## Plugin System
 
-Plugins can be statically linked via `DRAC_STATIC_PLUGINS` environment variable:
+Plugins are self-contained directories with a `plugin.json` manifest,
+auto-discovered from `plugins/` plus any `-Dplugin_dirs=` directories.
+`tools/plugin_helper.py` handles discovery, manifest parsing, static
+registration codegen, and scaffolding (`python3 tools/plugin_helper.py new <name>`).
 
 ```bash
-DRAC_STATIC_PLUGINS=now_playing,weather
+meson setup build -Dstatic_plugins=now_playing,weather  # compile into binary ('all' = every plugin)
+meson setup build                                       # dynamic plugins built as shared modules
 ```
+
+See `plugins/README.md` for the manifest schema and authoring guide.
 
 All bindings use the C API (`c-api/include/draconis_c.h`), not the C++ API directly.
 
