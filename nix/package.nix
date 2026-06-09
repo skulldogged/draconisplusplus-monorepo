@@ -137,6 +137,11 @@
         mkdir -p $out/bin $out/lib
         mv build/core/src/CLI/draconis++ $out/bin/draconis++
         mv build/core/src/Lib/libdrac++.a $out/lib/
+        if [ -d build/plugins ]; then
+          mkdir -p $out/lib/draconis++/plugins
+          find build/plugins -maxdepth 1 \( -name '*.so' -o -name '*.dylib' \) \
+            -exec cp {} $out/lib/draconis++/plugins/ \;
+        fi
         mkdir -p $out/include
         cp -r core/include/Drac++ $out/include/
       '';

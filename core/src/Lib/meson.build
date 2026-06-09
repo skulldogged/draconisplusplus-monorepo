@@ -11,11 +11,9 @@ lib_sources = {
   'plugins' : files('Core/PluginManager.cpp'),
 }
 
-# Static plugin sources - for precompiled builds with static plugins
-# Clone the plugins repo directly into the project root:
-#   git clone https://github.com/skulldogged/draconisplusplus-plugins.git plugins
-# Then build with: meson setup build -Dprecompiled_config=true -Dstatic_plugins=weather,now_playing
-plugins_dir = meson.project_source_root() / 'plugins'
+# Static plugin registry - always compiled when plugins are enabled so that
+# DracInitStaticPlugins() exists in every configuration (it registers zero
+# plugins in dynamic-only builds).
 static_plugin_registry = files('Core/StaticPlugins.cpp')
 
 # Platform-specific sources
@@ -42,188 +40,53 @@ lib_all_sources += platform_sources.get(host_system, files())
 
 # Plugin configuration
 static_plugin_cpp_args = []
-static_plugins = get_option('static_plugins')
 
 # Whether any plugin requires codesigning (macOS only, for private framework access)
 plugin_requires_codesign = false
 
-# Static plugins can be used with or without precompiled_config
-if static_plugins.length() > 0
+if feature_states['plugins']
   lib_all_sources += lib_sources['plugins']
   lib_all_sources += static_plugin_registry
-  
-  # Define DRAC_STATIC_PLUGIN_BUILD for all static plugins
-  # Plugins self-register, so no per-plugin defines needed
-  static_plugin_cpp_args += '-DDRAC_STATIC_PLUGIN_BUILD=1'
-  
-  # Initialize empty list for static plugin dependencies
-  static_plugin_deps = []
 
-  foreach plugin_name : static_plugins
-    # Dynamically find the plugin source file and metadata
-    plugin_source_path = plugins_dir / plugin_name / (plugin_name + '.cpp')
-    plugin_json_path = plugins_dir / plugin_name / 'plugin.json'
-    
-    # Check if the plugin source exists
-    if fs.is_file(plugin_source_path)
-      lib_all_sources += files(plugin_source_path)
-    else
-      error('Plugin source not found: "@0@". Expected file: @1@\nClone the plugins repo: git clone https://github.com/skulldogged/draconisplusplus-plugins.git plugins'.format(plugin_name, plugin_source_path))
-    endif
+  # Plugin classes the generated DracInitStaticPlugins() must register
+  static_plugin_classes = []
 
-    # Load plugin's plugin.json to get its dependencies and sources using Python
-    if fs.is_file(plugin_json_path)
-      # Use Python to parse JSON and output deps in a simple format
-      # Format: DEP|name|include_type|static|platforms (one per line)
-      # Format: SRC|filename|platforms (one per line)
-      # Format: CODESIGN|true/false (one line if present)
-      parse_result = run_command(
-        'python', '-c', '''
-import json, sys
-with open(sys.argv[1]) as f:
-    data = json.load(f)
-for dep in data.get("deps", []):
-    name = dep.get("name", "")
-    inc_type = dep.get("include_type", "preserve")
-    static = "true" if dep.get("static", False) else "false"
-    platforms = ",".join(dep.get("platforms", []))
-    print(f"DEP|{name}|{inc_type}|{static}|{platforms}")
-for src in data.get("sources", []):
-    filename = src.get("file", "")
-    platforms = ",".join(src.get("platforms", []))
-    print(f"SRC|{filename}|{platforms}")
-if data.get("codesign", False):
-    print("CODESIGN|true")
-''',
-        plugin_json_path,
+  if static_plugin_list.length() > 0
+    # Static plugin sources are compiled directly into the library;
+    # DRAC_PLUGIN() expands to self-registration functions instead of
+    # dlopen entry points.
+    static_plugin_cpp_args += '-DDRAC_STATIC_PLUGIN_BUILD=1'
+
+    foreach plugin_name : static_plugin_list
+      plugin_dir = discovered_plugins[plugin_name]
+      plugin_info = run_command(
+        python_prog, plugin_helper, 'info', plugin_dir, '--platform', host_system,
         check: true,
       )
-      
-      parse_output = parse_result.stdout().strip()
-      if parse_output != ''
-        foreach line : parse_output.split('\n')
-          parts = line.split('|')
-          line_type = parts[0]
-          
-          if line_type == 'DEP'
-            dep_name = parts[1]
-            dep_include_type = parts[2]
-            dep_static = parts[3] == 'true'
-            dep_platforms_str = parts[4]
-            
-            # Check if this dependency is platform-specific
-            if dep_platforms_str != ''
-              dep_platforms = dep_platforms_str.split(',')
-              # Only add if current platform is in the list
-              if host_system in dep_platforms
-                static_plugin_deps += dependency(dep_name, include_type: dep_include_type, static: dep_static)
-              endif
-            else
-              # No platform restriction, add unconditionally
-              static_plugin_deps += dependency(dep_name, include_type: dep_include_type, static: dep_static)
-            endif
-          elif line_type == 'SRC'
-            src_filename = parts[1]
-            src_platforms_str = parts[2]
-            
-            # Check if this source is platform-specific
-            should_add = false
-            if src_platforms_str != ''
-              src_platforms = src_platforms_str.split(',')
-              if host_system in src_platforms
-                should_add = true
-              endif
-            else
-              # No platform restriction, add unconditionally
-              should_add = true
-            endif
-            
-            if should_add
-              src_full_path = plugins_dir / plugin_name / src_filename
-              if fs.is_file(src_full_path)
-                lib_all_sources += files(src_full_path)
-              else
-                warning('Plugin @0@: source file not found: @1@'.format(plugin_name, src_full_path))
-              endif
-            endif
-          elif line_type == 'CODESIGN'
-            # Plugin requires codesigning (only relevant on macOS)
-            plugin_requires_codesign = true
-          endif
-        endforeach
-      endif
-    endif
-  endforeach
 
-  # Add static plugin dependencies to lib_deps
-  lib_deps += static_plugin_deps
-  
-  # Generate static plugin registration source file
-  # This creates a DracInitStaticPlugins() function that calls all registration functions
-  plugin_reg_content = '''
-// Auto-generated by meson - do not edit
-#include <Drac++/Core/StaticPlugins.hpp>
-#include <cstddef>
+      foreach line : plugin_info.stdout().strip().split('\n')
+        parts = line.split('|')
+        if parts[0] == 'SUPPORTED' and parts[1] == 'no'
+          error('Static plugin "@0@" does not support @1@.'.format(plugin_name, host_system))
+        elif parts[0] == 'CLASS'
+          static_plugin_classes += parts[1]
+        elif parts[0] == 'CODESIGN' and parts[1] == 'yes'
+          plugin_requires_codesign = true
+        elif parts[0] == 'SRC'
+          lib_all_sources += files(parts[1])
+        elif parts[0] == 'DEP'
+          lib_deps += dependency(parts[1], include_type: parts[2], static: parts[3] == 'true')
+        endif
+      endforeach
+    endforeach
+  endif
 
-extern "C" {
-'''
-  foreach plugin_name : static_plugins
-    plugin_json_path = plugins_dir / plugin_name / 'plugin.json'
-    plugin_class = plugin_name  # default to directory name
-    if fs.is_file(plugin_json_path)
-      parse_class = run_command(
-        'python', '-c', '''
-import json, sys
-with open(sys.argv[1]) as f:
-    data = json.load(f)
-print(data.get("class", data.get("name", "")))
-''',
-        plugin_json_path,
-        check: true,
-      )
-      plugin_class = parse_class.stdout().strip()
-    endif
-    plugin_reg_content += f'  void DracRegisterPlugin_@plugin_class@();\n'
-  endforeach
-  
-  plugin_reg_content += '''
-}
-
-namespace draconis::core::plugin {
-  auto DracInitStaticPlugins() -> std::size_t {
-    std::size_t count = 0;
-'''
-  foreach plugin_name : static_plugins
-    plugin_json_path = plugins_dir / plugin_name / 'plugin.json'
-    plugin_class = plugin_name  # default to directory name
-    if fs.is_file(plugin_json_path)
-      parse_class = run_command(
-        'python', '-c', '''
-import json, sys
-with open(sys.argv[1]) as f:
-    data = json.load(f)
-print(data.get("class", data.get("name", "")))
-''',
-        plugin_json_path,
-        check: true,
-      )
-      plugin_class = parse_class.stdout().strip()
-    endif
-    plugin_reg_content += f'    DracRegisterPlugin_@plugin_class@(); ++count;\n'
-  endforeach
-  
-  plugin_reg_content += '''    return count;
-  }
-}
-'''
-  plugin_reg_file = configure_file(
+  # Generate DracInitStaticPlugins(); registers zero plugins in dynamic-only builds
+  lib_all_sources += configure_file(
     output: 'StaticPluginInit.cpp',
-    command: [find_program('python3'), '-c', 'import sys; open(sys.argv[1], "w").write(sys.argv[2])', '@OUTPUT@', plugin_reg_content],
+    command: [python_prog, plugin_helper, 'registry'] + static_plugin_classes,
+    capture: true,
   )
-  lib_all_sources += plugin_reg_file
-elif get_option('plugins').enabled()
-  # Non-precompiled mode without static plugins: use dynamic plugin loading
-  lib_all_sources += lib_sources['plugins']
 endif
 
 # Link arguments for pci_ids (only applied at final executable level, not on dependencies)
@@ -255,7 +118,7 @@ draconis_dep = declare_dependency(
 )
 
 # Dependency with link_whole for the main CLI (ensures static plugin self-registration isn't stripped)
-if static_plugins.length() > 0
+if static_plugin_list.length() > 0
   draconis_dep_whole = declare_dependency(
     link_whole : libdrac,
     dependencies : [includes_dep] + lib_deps,

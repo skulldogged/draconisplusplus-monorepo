@@ -11,7 +11,9 @@
  * - Faster startup (no dynamic library loading)
  * - Smaller distribution (no separate .dll/.so files needed)
  *
- * Plugins register via DracInitStaticPlugins() which must be called explicitly.
+ * Plugins register via DracInitStaticPlugins(), which is called automatically
+ * by PluginManager::initialize(). Standalone consumers (e.g. the C API or
+ * language bindings) may also call it directly.
  */
 
 #pragma once

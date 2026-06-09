@@ -82,13 +82,17 @@ foreach option, define : {
   feature_states += {option: enabled}
 endforeach
 
-# In precompiled config mode, plugins are enabled if and only if static_plugins is non-empty
+# Plugin system: 'auto' enables the dynamic loader (it has no extra
+# dependencies), and requesting static plugins forces the system on.
+plugins_enabled = get_option('plugins').allowed() or static_plugin_list.length() > 0
+
+# In precompiled config mode, plugins are enabled if and only if static plugins are requested
 if get_option('precompiled_config')
-  static_plugins = get_option('static_plugins')
-  plugins_enabled = static_plugins.length() > 0
-  project_flag_defines += {'DRAC_ENABLE_PLUGINS': plugins_enabled}
-  feature_states += {'plugins': plugins_enabled}
+  plugins_enabled = static_plugin_list.length() > 0
 endif
+
+project_flag_defines += {'DRAC_ENABLE_PLUGINS': plugins_enabled}
+feature_states += {'plugins': plugins_enabled}
 
 cpp_args = []
 
@@ -153,16 +157,23 @@ third_party_includes = include_directories('third_party', is_system: true)
 
 fs = import('fs')
 
-# For static plugins, add the cloned plugins repo to include path
-# This allows #include "plugins/..." to work with the cloned repo structure.
-plugins_dir = meson.project_source_root() / 'plugins'
+# Make plugin headers visible to core (e.g. precompiled config including
+# plugin config headers). Covers the bundled plugins/ directory and any
+# extra directories passed via -Dplugin_dirs=.
 plugins_includes = []
 
-if fs.is_dir(plugins_dir)
-  plugins_includes = [include_directories('../plugins', is_system: true)]
-else
-  message('Plugins directory not found; static plugins will be unavailable unless provided externally.')
+if fs.is_dir(meson.project_source_root() / 'plugins')
+  plugins_includes += include_directories('../plugins', is_system: true)
 endif
+
+foreach extra_dir : get_option('plugin_dirs')
+  if not fs.is_absolute(extra_dir)
+    extra_dir = meson.project_source_root() / extra_dir
+  endif
+  if fs.is_dir(extra_dir)
+    plugins_includes += include_directories(extra_dir, is_system: true)
+  endif
+endforeach
 
 includes_dep = declare_dependency(
   include_directories: [project_public_includes, third_party_includes] + plugins_includes,
