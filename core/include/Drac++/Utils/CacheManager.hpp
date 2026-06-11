@@ -43,6 +43,22 @@ namespace draconis::utils::cache {
     }
   };
 
+  namespace detail {
+    /**
+     * @brief One serialized cache entry inside a snapshot file.
+     *
+     * The expiry is duplicated outside the BEVE payload so entries can be
+     * validated and pruned without knowing the payload type.
+     */
+    struct StoredCacheEntry {
+      types::String             data;    ///< BEVE-encoded CacheEntry<T>.
+      types::Option<types::u64> expires; ///< UNIX timestamp (seconds), None = never.
+    };
+
+    /// On-disk snapshot format: all entries for one cache location.
+    using CacheSnapshot = types::Map<types::String, StoredCacheEntry>;
+  } // namespace detail
+
   class CacheManager {
    public:
     /*!
@@ -77,9 +93,36 @@ namespace draconis::utils::cache {
     CacheManager()
       : m_globalPolicy { .location = CacheLocation::Persistent, .ttl = days(1) } {}
 
+    CacheManager(const CacheManager&)                    = delete;
+    CacheManager(CacheManager&&)                         = delete;
+    auto operator=(const CacheManager&) -> CacheManager& = delete;
+    auto operator=(CacheManager&&) -> CacheManager&      = delete;
+
+    ~CacheManager() {
+      flush();
+    }
+
     auto setGlobalPolicy(const CachePolicy& policy) -> types::Unit {
       types::LockGuard lock(m_cacheMutex);
       m_globalPolicy = policy;
+    }
+
+    /**
+     * @brief Write any modified cache entries to disk.
+     *
+     * Each on-disk location is stored as a single snapshot file, so a run
+     * costs at most one read at first access and one write here — instead of
+     * one file open per key, which is expensive on platforms where every
+     * file open is scanned (e.g. Windows Defender).
+     *
+     * Called automatically on destruction.
+     */
+    auto flush() -> types::Unit {
+      if constexpr (DRAC_ENABLE_CACHING) {
+        types::LockGuard lock(m_cacheMutex);
+        flushStoreLocked(m_tempStore, CacheLocation::TempDirectory);
+        flushStoreLocked(m_persistentStore, CacheLocation::Persistent);
+      }
     }
 
     template <typename T>
@@ -99,9 +142,10 @@ namespace draconis::utils::cache {
         if (ignoreCache)
           return fetcher();
 
-        // The mutex only guards the in-memory map; fetchers and disk I/O run
-        // unlocked so concurrent getOrSet calls for different keys don't
-        // serialize on a single global lock.
+        // The mutex only guards the in-memory stores; fetchers run unlocked
+        // so concurrent getOrSet calls for different keys don't serialize on
+        // a single global lock. Disk I/O happens once per location: the
+        // snapshot is loaded on first access and flushed on destruction.
         CachePolicy policy;
 
         {
@@ -109,52 +153,21 @@ namespace draconis::utils::cache {
 
           policy = overridePolicy.value_or(m_globalPolicy);
 
-          // 1. Check in-memory cache
-          if (const auto iter = m_inMemoryCache.find(key); iter != m_inMemoryCache.end())
-            if (
-              CacheEntry<T> entry; glz::read_beve(entry, iter->second.first) == glz::error_code::none &&
-              (!entry.expires.has_value() || system_clock::now() < system_clock::time_point(seconds(*entry.expires)))
-            )
+          Store& store = storeFor(policy.location);
+          ensureLoadedLocked(store, policy.location);
+
+          if (const auto iter = store.entries.find(key); iter != store.entries.end() && !IsExpired(iter->second.expires))
+            if (CacheEntry<T> entry; glz::read_beve(entry, iter->second.data) == glz::error_code::none)
               return entry.data;
         }
 
-        // 2. Check filesystem cache
-        const types::Option<fs::path> filePath = getCacheFilePath(key, policy.location);
-
-        if (filePath) {
-          std::error_code statErr;
-
-          if (const auto fileSize = fs::file_size(*filePath, statErr); !statErr && fileSize > 0) {
-            if (std::ifstream ifs(*filePath, std::ios::binary); ifs) {
-              std::string fileContents(fileSize, '\0');
-
-              if (ifs.read(fileContents.data(), static_cast<std::streamsize>(fileSize))) {
-                CacheEntry<T> entry;
-
-                if (glz::read_beve(entry, fileContents) == glz::error_code::none) {
-                  if (!entry.expires.has_value() || system_clock::now() < system_clock::time_point(seconds(*entry.expires))) {
-                    system_clock::time_point expiryTp = entry.expires.has_value() ? system_clock::time_point(seconds(*entry.expires)) : system_clock::time_point::max();
-
-                    {
-                      types::LockGuard lock(m_cacheMutex);
-                      m_inMemoryCache[key] = { std::move(fileContents), expiryTp };
-                    }
-
-                    return entry.data;
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        // 3. Cache miss: call fetcher (move the callable to indicate consumption)
+        // Cache miss: call fetcher without holding the lock
         types::Result<T> fetchedResult = fetcher();
 
         if (!fetchedResult)
           return fetchedResult;
 
-        // 4. Store in cache
+        // Store in cache
         types::Option<types::u64> expiryTs;
         if (policy.ttl.has_value()) {
           system_clock::time_point now        = system_clock::now();
@@ -171,35 +184,14 @@ namespace draconis::utils::cache {
         std::string binaryBuffer;
         glz::write_beve(newEntry, binaryBuffer);
 
-        system_clock::time_point inMemoryExpiryTp = expiryTs.has_value()
-          ? system_clock::time_point(seconds(*expiryTs))
-          : system_clock::time_point::max();
-
         {
           types::LockGuard lock(m_cacheMutex);
-          m_inMemoryCache[key] = { binaryBuffer, inMemoryExpiryTp };
-        }
 
-        if (policy.location != CacheLocation::InMemory && filePath) {
-          std::error_code errc;
-          fs::create_directories(filePath->parent_path(), errc);
-          if (!errc) {
-            // Write to a temp file and rename so concurrent readers never see
-            // a partially-written cache entry.
-            fs::path tmpPath = *filePath;
-            tmpPath += std::format(".tmp{}", std::hash<std::thread::id> {}(std::this_thread::get_id()));
+          Store& store       = storeFor(policy.location);
+          store.entries[key] = detail::StoredCacheEntry { std::move(binaryBuffer), expiryTs };
 
-            bool written = false;
-            if (std::ofstream ofs(tmpPath, std::ios::binary | std::ios::trunc); ofs.is_open())
-              written = static_cast<bool>(ofs.write(binaryBuffer.data(), static_cast<std::streamsize>(binaryBuffer.size())));
-
-            if (written) {
-              fs::rename(tmpPath, *filePath, errc);
-              if (errc)
-                fs::remove(tmpPath, errc);
-            } else
-              fs::remove(tmpPath, errc);
-          }
+          if (policy.location != CacheLocation::InMemory)
+            store.dirty = true;
         }
 
         return fetchedResult;
@@ -228,15 +220,21 @@ namespace draconis::utils::cache {
       if constexpr (DRAC_ENABLE_CACHING) {
         types::LockGuard lock(m_cacheMutex);
 
-        // Erase from in-memory cache (no harm if the key is absent).
-        m_inMemoryCache.erase(key);
+        m_memStore.entries.erase(key);
 
-        // Attempt to remove the on-disk copies for both possible locations.
-        for (const CacheLocation loc : { CacheLocation::TempDirectory, CacheLocation::Persistent })
-          if (const types::Option<fs::path> filePath = getCacheFilePath(key, loc); filePath && fs::exists(*filePath)) {
+        for (const CacheLocation loc : { CacheLocation::TempDirectory, CacheLocation::Persistent }) {
+          Store& store = storeFor(loc);
+          ensureLoadedLocked(store, loc);
+
+          if (store.entries.erase(key) > 0)
+            store.dirty = true;
+
+          // Also remove any legacy per-key cache file from older versions.
+          if (const types::Option<fs::path> dir = getSnapshotDir(loc)) {
             std::error_code errc;
-            fs::remove(*filePath, errc);
+            fs::remove(*dir / key, errc);
           }
+        }
       } else {
         (void)key;
       }
@@ -255,15 +253,21 @@ namespace draconis::utils::cache {
 
         types::u8 removedCount = 0;
 
-        // Record keys currently present so we can clean their temp-dir copies
-        // after we clear the map.
+        // Record keys currently present so we can clean their (legacy)
+        // temp-dir copies after we clear the stores.
         types::Vec<types::String> keys;
-        keys.reserve(m_inMemoryCache.size());
-        for (const auto& [key, val] : m_inMemoryCache)
-          keys.emplace_back(key);
+        keys.reserve(m_memStore.entries.size() + m_tempStore.entries.size() + m_persistentStore.entries.size());
+        for (const Store* store : { &m_memStore, &m_tempStore, &m_persistentStore })
+          for (const auto& [key, val] : store->entries)
+            keys.emplace_back(key);
 
-        // Clear in-memory cache.
-        m_inMemoryCache.clear();
+        // Clear all in-memory stores. The snapshot files are removed below,
+        // so there is nothing left to flush.
+        for (Store* store : { &m_memStore, &m_tempStore, &m_persistentStore }) {
+          store->entries.clear();
+          store->loaded = true;
+          store->dirty  = false;
+        }
 
         // Remove all files from persistent cache directory.
         const fs::path persistentDir = getPersistentCacheDir();
@@ -296,6 +300,10 @@ namespace draconis::utils::cache {
                   break;
                 }
 
+              // The snapshot file holding all temp-directory entries.
+              if (!shouldRemove && entry.path().filename() == SNAPSHOT_FILENAME)
+                shouldRemove = true;
+
               // Also remove any files that might be orphaned cache files
               // (files that don't have extensions and are likely our cache files)
               if (!shouldRemove && entry.path().extension().empty())
@@ -319,33 +327,139 @@ namespace draconis::utils::cache {
     }
 
    private:
+    static constexpr const char* SNAPSHOT_FILENAME = "draconis_cache.beve";
+
+    /// All entries for one cache location, loaded lazily from its snapshot file.
+    struct Store {
+      types::UnorderedMap<types::String, detail::StoredCacheEntry> entries;
+
+      bool loaded = false; ///< Snapshot file has been read (or doesn't exist).
+      bool dirty  = false; ///< Entries changed since load; flush() rewrites the snapshot.
+    };
+
     CachePolicy m_globalPolicy;
 
-    // BEVE-encoded cache entries (for typed data with automatic serialization)
-    types::UnorderedMap<types::String, types::Pair<types::String, system_clock::time_point>> m_inMemoryCache;
+    Store m_memStore { .entries = {}, .loaded = true, .dirty = false };
+    Store m_tempStore;
+    Store m_persistentStore;
 
     types::Mutex m_cacheMutex;
 
-    static auto getCacheFilePath(const types::String& key, const CacheLocation location) -> types::Option<fs::path> {
-      using matchit::match, matchit::is, matchit::_;
+    static auto IsExpired(const types::Option<types::u64>& expires) -> bool {
+      return expires.has_value() && system_clock::now() >= system_clock::time_point(seconds(*expires));
+    }
 
-      types::Option<fs::path> cacheDir = types::None;
-
-      if (location == CacheLocation::InMemory)
-        return types::None; // In-memory cache does not have a file path
-
+    auto storeFor(const CacheLocation location) -> Store& {
       if (location == CacheLocation::TempDirectory)
-        return types::Some(fs::temp_directory_path() / key);
+        return m_tempStore;
+      if (location == CacheLocation::Persistent)
+        return m_persistentStore;
+      return m_memStore;
+    }
+
+    static auto getSnapshotDir(const CacheLocation location) -> types::Option<fs::path> {
+      if (location == CacheLocation::TempDirectory)
+        return types::Some(fs::temp_directory_path());
 
       if (location == CacheLocation::Persistent)
-        return types::Some(getPersistentCacheDir() / key);
+        return types::Some(getPersistentCacheDir());
 
-      if (cacheDir) {
-        fs::create_directories(*cacheDir);
-        return *cacheDir / key;
+      return types::None; // In-memory cache has no file
+    }
+
+    auto ensureLoadedLocked(Store& store, const CacheLocation location) -> types::Unit {
+      if (store.loaded)
+        return;
+
+      store.loaded = true;
+
+      const types::Option<fs::path> dir = getSnapshotDir(location);
+
+      if (!dir)
+        return;
+
+      const fs::path snapshotPath = *dir / SNAPSHOT_FILENAME;
+
+      std::error_code statErr;
+      const auto      fileSize = fs::file_size(snapshotPath, statErr);
+
+      if (statErr || fileSize == 0)
+        return;
+
+      std::ifstream ifs(snapshotPath, std::ios::binary);
+
+      if (!ifs)
+        return;
+
+      std::string buffer(fileSize, '\0');
+
+      if (!ifs.read(buffer.data(), static_cast<std::streamsize>(fileSize)))
+        return;
+
+      detail::CacheSnapshot snapshot;
+
+      if (glz::read_beve(snapshot, buffer) != glz::error_code::none)
+        return;
+
+      store.entries.reserve(snapshot.size());
+
+      for (auto& [key, entry] : snapshot) {
+        if (IsExpired(entry.expires)) {
+          store.dirty = true; // drop expired entries; rewrite on flush
+          continue;
+        }
+
+        store.entries.emplace(key, std::move(entry));
+      }
+    }
+
+    auto flushStoreLocked(Store& store, const CacheLocation location) -> types::Unit {
+      if (!store.dirty)
+        return;
+
+      const types::Option<fs::path> dir = getSnapshotDir(location);
+
+      if (!dir)
+        return;
+
+      detail::CacheSnapshot snapshot;
+
+      for (const auto& [key, entry] : store.entries)
+        if (!IsExpired(entry.expires))
+          snapshot.emplace(key, entry);
+
+      std::string buffer;
+      glz::write_beve(snapshot, buffer);
+
+      std::error_code errc;
+      fs::create_directories(*dir, errc);
+
+      if (errc)
+        return;
+
+      const fs::path snapshotPath = *dir / SNAPSHOT_FILENAME;
+
+      // Write to a temp file and rename so concurrent readers never see a
+      // partially-written snapshot.
+      fs::path tmpPath = snapshotPath;
+      tmpPath += std::format(".tmp{}", std::hash<std::thread::id> {}(std::this_thread::get_id()));
+
+      bool written = false;
+      if (std::ofstream ofs(tmpPath, std::ios::binary | std::ios::trunc); ofs.is_open())
+        written = static_cast<bool>(ofs.write(buffer.data(), static_cast<std::streamsize>(buffer.size())));
+
+      if (written) {
+        fs::rename(tmpPath, snapshotPath, errc);
+        if (errc) {
+          fs::remove(tmpPath, errc);
+          return;
+        }
+      } else {
+        fs::remove(tmpPath, errc);
+        return;
       }
 
-      return types::None;
+      store.dirty = false;
     }
   };
 } // namespace draconis::utils::cache
@@ -410,6 +524,13 @@ namespace glz {
   template <typename Tp>
   struct meta<draconis::utils::cache::CacheManager::CacheEntry<Tp>> {
     using T = draconis::utils::cache::CacheManager::CacheEntry<Tp>;
+
+    static constexpr detail::Object value = object("data", &T::data, "expires", &T::expires);
+  };
+
+  template <>
+  struct meta<draconis::utils::cache::detail::StoredCacheEntry> {
+    using T = draconis::utils::cache::detail::StoredCacheEntry;
 
     static constexpr detail::Object value = object("data", &T::data, "expires", &T::expires);
   };

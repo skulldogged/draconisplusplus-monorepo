@@ -5,10 +5,6 @@
   #include <Drac++/Core/PluginManager.hpp>
 #endif
 
-#ifdef _WIN32
-  #include <objbase.h> // CoInitializeEx, COINIT_MULTITHREADED
-#endif
-
 #include <algorithm>
 #include <cctype>
 
@@ -65,9 +61,9 @@ struct CliOptions {
 };
 
 auto main(const i32 argc, CStr* argv[]) -> i32 try {
-#ifdef _WIN32
-  CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-#endif
+  // COM is initialized on demand by the code paths that need it (GPU
+  // detection, now_playing); initializing it here would cost startup time on
+  // every run even when those paths hit the cache.
 
   CliOptions opts;
 

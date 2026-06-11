@@ -32,6 +32,30 @@ elif host_system == 'linux'
   endif
 elif host_system == 'haiku'
   link_args += ['-lpackage', '-lbe']
+elif host_system == 'windows'
+  # Delay-load DLLs that are only touched on cache misses (e.g. dxgi for GPU
+  # detection) so warm runs don't pay to map and initialize them at process
+  # startup. Checked at configure time so unsupported toolchains skip it.
+  delayload_dlls = ['dxgi.dll', 'dwmapi.dll', 'setupapi.dll', 'propsys.dll', 'iphlpapi.dll']
+
+  delayload_args = ['-Wl,delayimp.lib']
+  foreach dll : delayload_dlls
+    delayload_args += '-Wl,/delayload:' + dll
+  endforeach
+
+  if cpp.has_multi_link_arguments(delayload_args)
+    link_args += delayload_args
+  else
+    # MSVC-style driver (cl/clang-cl) passes linker flags directly.
+    delayload_args = ['delayimp.lib']
+    foreach dll : delayload_dlls
+      delayload_args += '/DELAYLOAD:' + dll
+    endforeach
+
+    if cpp.has_multi_link_arguments(delayload_args)
+      link_args += delayload_args
+    endif
+  endif
 endif
 
 # ------------------- #
