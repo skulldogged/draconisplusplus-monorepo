@@ -73,7 +73,15 @@ foreach option, define : {
 
   # Check if this is a feature option
   if option in feature_options
-    enabled = opt_val.enabled()
+    # Caching has no external dependencies, so 'auto' (the default) means
+    # enabled. Without it every run re-fetches all system info, which is a
+    # large startup cost for readouts like GPU model (DXGI) and window
+    # manager (process-tree scan).
+    if option == 'caching'
+      enabled = opt_val.allowed()
+    else
+      enabled = opt_val.enabled()
+    endif
   else
     enabled = opt_val
   endif
