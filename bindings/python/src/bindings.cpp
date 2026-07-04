@@ -43,6 +43,12 @@ namespace {
           result.append(plugin_field_value_to_python(value.arrayValue.items[i]));
         return std::move(result);
       }
+      case DRAC_PLUGIN_FIELD_OBJECT: {
+        nb::dict result;
+        for (size_t i = 0; i < value.objectValue.count; ++i)
+          result[nb::str(value.objectValue.items[i].key ? value.objectValue.items[i].key : "")] = plugin_field_value_to_python(value.objectValue.items[i].value);
+        return std::move(result);
+      }
     }
 
     return nb::none();

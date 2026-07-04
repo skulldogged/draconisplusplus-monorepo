@@ -148,6 +148,12 @@ internal struct DracPluginFieldValueArray
     public nuint Count;
 }
 
+internal struct DracPluginFieldValueObject
+{
+    public IntPtr Items;
+    public nuint Count;
+}
+
 internal enum DracPluginFieldValueType
 {
     Bool,
@@ -156,6 +162,7 @@ internal enum DracPluginFieldValueType
     F64,
     String,
     Array,
+    Object,
 }
 
 [StructLayout(LayoutKind.Explicit)]
@@ -167,6 +174,7 @@ internal struct DracPluginFieldValueUnion
     [FieldOffset(0)] public double F64Value;
     [FieldOffset(0)] public IntPtr StringValue;
     [FieldOffset(0)] public DracPluginFieldValueArray ArrayValue;
+    [FieldOffset(0)] public DracPluginFieldValueObject ObjectValue;
 }
 
 [StructLayout(LayoutKind.Sequential)]

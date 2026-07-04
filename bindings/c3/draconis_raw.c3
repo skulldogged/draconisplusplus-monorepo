@@ -122,10 +122,16 @@ enum DracPluginFieldValueType {
   DRAC_PLUGIN_FIELD_F64,
   DRAC_PLUGIN_FIELD_STRING,
   DRAC_PLUGIN_FIELD_ARRAY,
+  DRAC_PLUGIN_FIELD_OBJECT,
 }
 
 struct DracPluginFieldValueArray {
   DracPluginFieldValue* items;
+  usz count;
+}
+
+struct DracPluginFieldValueObject {
+  DracPluginField* items;
   usz count;
 }
 
@@ -136,6 +142,7 @@ union DracPluginFieldValueUnion {
   double f64_value;
   char* string_value;
   DracPluginFieldValueArray array_value;
+  DracPluginFieldValueObject object_value;
 }
 
 struct DracPluginFieldValue {

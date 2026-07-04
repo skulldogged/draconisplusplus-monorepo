@@ -71,7 +71,7 @@ namespace {
             .type        = DRAC_PLUGIN_FIELD_STRING,
             .stringValue = DupString(inner),
           };
-        } else {
+        } else if constexpr (std::same_as<T, PluginFieldArray>) {
           DracPluginFieldValueArray array {
             .items = new DracPluginFieldValue[inner.size()],
             .count = inner.size(),
@@ -83,6 +83,23 @@ namespace {
           return {
             .type       = DRAC_PLUGIN_FIELD_ARRAY,
             .arrayValue = array,
+          };
+        } else {
+          DracPluginFieldValueObject object {
+            .items = new DracPluginField[inner.size()],
+            .count = inner.size(),
+          };
+
+          usize i = 0;
+          for (const auto& [key, fieldValue] : inner) {
+            object.items[i].key   = DupString(key);
+            object.items[i].value = ToCPluginFieldValue(fieldValue);
+            ++i;
+          }
+
+          return {
+            .type        = DRAC_PLUGIN_FIELD_OBJECT,
+            .objectValue = object,
           };
         }
       },
@@ -102,6 +119,16 @@ namespace {
         delete[] value.arrayValue.items;
         value.arrayValue.items = nullptr;
         value.arrayValue.count = 0;
+        break;
+      case DRAC_PLUGIN_FIELD_OBJECT:
+        for (size_t i = 0; i < value.objectValue.count; ++i) {
+          delete[] value.objectValue.items[i].key;
+          value.objectValue.items[i].key = nullptr;
+          FreePluginFieldValue(value.objectValue.items[i].value);
+        }
+        delete[] value.objectValue.items;
+        value.objectValue.items = nullptr;
+        value.objectValue.count = 0;
         break;
       case DRAC_PLUGIN_FIELD_BOOL:
       case DRAC_PLUGIN_FIELD_I64:

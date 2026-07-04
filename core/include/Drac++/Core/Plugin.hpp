@@ -210,6 +210,7 @@ namespace draconis::core::plugin {
   struct PluginFieldValue;
 
   using PluginFieldArray = utils::types::Vec<PluginFieldValue>;
+  using PluginFieldObject = utils::types::Map<utils::types::String, PluginFieldValue>;
 
   using PluginFieldValueBase = utils::types::Variant<
     bool,
@@ -217,7 +218,8 @@ namespace draconis::core::plugin {
     utils::types::u64,
     utils::types::f64,
     utils::types::String,
-    PluginFieldArray>;
+    PluginFieldArray,
+    PluginFieldObject>;
 
   struct PluginFieldValue : PluginFieldValueBase {
     using PluginFieldValueBase::PluginFieldValueBase;
@@ -245,7 +247,7 @@ namespace draconis::core::plugin {
     }
   };
 
-  using PluginFields = utils::types::Map<utils::types::String, PluginFieldValue>;
+  using PluginFields = PluginFieldObject;
   using PluginData   = utils::types::Map<utils::types::String, PluginFields>;
 
   [[nodiscard]] inline auto PluginFieldToString(const PluginFieldValue& value) -> utils::types::String {
@@ -263,7 +265,7 @@ namespace draconis::core::plugin {
           return std::format("{}", inner);
         else if constexpr (std::same_as<T, String>)
           return inner;
-        else {
+        else if constexpr (std::same_as<T, PluginFieldArray>) {
           String result;
           usize  size = 0;
           for (const PluginFieldValue& item : inner)
@@ -274,6 +276,24 @@ namespace draconis::core::plugin {
             if (i > 0)
               result += ", ";
             result += PluginFieldToString(inner[i]);
+          }
+
+          return result;
+        } else {
+          String result;
+          usize  size = 0;
+          for (const auto& [key, item] : inner)
+            size += key.size() + PluginFieldToString(item).size() + 3;
+          result.reserve(size);
+
+          bool first = true;
+          for (const auto& [key, item] : inner) {
+            if (!first)
+              result += ", ";
+            first = false;
+            result += key;
+            result += ": ";
+            result += PluginFieldToString(item);
           }
 
           return result;

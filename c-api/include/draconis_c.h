@@ -354,14 +354,21 @@ extern "C" {
     DRAC_PLUGIN_FIELD_F64,
     DRAC_PLUGIN_FIELD_STRING,
     DRAC_PLUGIN_FIELD_ARRAY,
+    DRAC_PLUGIN_FIELD_OBJECT,
   } DracPluginFieldValueType;
 
   typedef struct DracPluginFieldValue DracPluginFieldValue;
+  typedef struct DracPluginField DracPluginField;
 
   typedef struct DracPluginFieldValueArray {
     DracPluginFieldValue* items;
     size_t count;
   } DracPluginFieldValueArray;
+
+  typedef struct DracPluginFieldValueObject {
+    DracPluginField* items;
+    size_t count;
+  } DracPluginFieldValueObject;
 
   struct DracPluginFieldValue {
     DracPluginFieldValueType type;
@@ -372,13 +379,14 @@ extern "C" {
       double                    f64Value;
       char*                     stringValue;
       DracPluginFieldValueArray arrayValue;
+      DracPluginFieldValueObject objectValue;
     };
   };
 
-  typedef struct DracPluginField {
+  struct DracPluginField {
     char*                key;
     DracPluginFieldValue value;
-  } DracPluginField;
+  };
 
   typedef struct DracPluginFieldList {
     DracPluginField* items;

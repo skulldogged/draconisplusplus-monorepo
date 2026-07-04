@@ -50,6 +50,12 @@ namespace {
           result[i + 1] = pluginFieldValueToLua(lua, value.arrayValue.items[i]);
         return result;
       }
+      case DRAC_PLUGIN_FIELD_OBJECT: {
+        sol::table result = lua.create_table();
+        for (size_t i = 0; i < value.objectValue.count; ++i)
+          result[value.objectValue.items[i].key ? value.objectValue.items[i].key : ""] = pluginFieldValueToLua(lua, value.objectValue.items[i].value);
+        return result;
+      }
     }
 
     return sol::nil;

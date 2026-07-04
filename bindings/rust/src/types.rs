@@ -38,6 +38,7 @@ const DRAC_PLUGIN_FIELD_U64: u32 = 2;
 const DRAC_PLUGIN_FIELD_F64: u32 = 3;
 const DRAC_PLUGIN_FIELD_STRING: u32 = 4;
 const DRAC_PLUGIN_FIELD_ARRAY: u32 = 5;
+const DRAC_PLUGIN_FIELD_OBJECT: u32 = 6;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PluginFieldValue {
@@ -47,6 +48,7 @@ pub enum PluginFieldValue {
   F64(f64),
   String(String),
   Array(Vec<PluginFieldValue>),
+  Object(std::collections::HashMap<String, PluginFieldValue>),
 }
 pub const DRAC_BATTERY_NOT_PRESENT: DracBatteryStatus = 4;
 
@@ -845,6 +847,25 @@ impl Plugin {
           }
         }
         PluginFieldValue::Array(items)
+      }
+      DRAC_PLUGIN_FIELD_OBJECT => {
+        let object = unsafe { value.__bindgen_anon_1.objectValue };
+        let mut items = std::collections::HashMap::new();
+        if !object.items.is_null() && object.count > 0 {
+          items.reserve(object.count);
+          for i in 0..object.count {
+            let item = unsafe { &*object.items.add(i) };
+            let key = if item.key.is_null() {
+              String::new()
+            } else {
+              unsafe { CStr::from_ptr(item.key) }
+                .to_string_lossy()
+                .into_owned()
+            };
+            items.insert(key, Self::plugin_field_value_to_rust(&item.value));
+          }
+        }
+        PluginFieldValue::Object(items)
       }
       _ => PluginFieldValue::String(String::new()),
     }

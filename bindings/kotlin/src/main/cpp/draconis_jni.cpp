@@ -54,6 +54,18 @@ namespace {
           env->CallBooleanMethod(list, add, pluginFieldValueToJava(env, value.arrayValue.items[i]));
         return list;
       }
+      case DRAC_PLUGIN_FIELD_OBJECT: {
+        jclass    mapClass = env->FindClass("java/util/HashMap");
+        jmethodID ctor     = env->GetMethodID(mapClass, "<init>", "()V");
+        jmethodID put      = env->GetMethodID(mapClass, "put", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
+        jobject   map      = env->NewObject(mapClass, ctor);
+        for (size_t i = 0; i < value.objectValue.count; ++i) {
+          jstring key = toJString(env, value.objectValue.items[i].key);
+          env->CallObjectMethod(map, put, key, pluginFieldValueToJava(env, value.objectValue.items[i].value));
+          env->DeleteLocalRef(key);
+        }
+        return map;
+      }
     }
 
     return nullptr;

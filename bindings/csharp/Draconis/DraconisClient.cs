@@ -393,6 +393,7 @@ public sealed class Plugin : IDisposable
             DracPluginFieldValueType.F64 => value.Value.F64Value,
             DracPluginFieldValueType.String => TakeString(value.Value.StringValue, free: false),
             DracPluginFieldValueType.Array => PluginFieldArrayToObjectArray(value.Value.ArrayValue),
+            DracPluginFieldValueType.Object => PluginFieldObjectToDictionary(value.Value.ObjectValue),
             _ => null,
         };
     }
@@ -409,6 +410,23 @@ public sealed class Plugin : IDisposable
             var valuePtr = IntPtr.Add(array.Items, (int)(i * (nuint)size));
             var value = Marshal.PtrToStructure<DracPluginFieldValue>(valuePtr);
             result[i] = PluginFieldValueToObject(value);
+        }
+        return result;
+    }
+
+    private static Dictionary<string, object?> PluginFieldObjectToDictionary(DracPluginFieldValueObject obj)
+    {
+        var result = new Dictionary<string, object?>(checked((int)obj.Count));
+        if (obj.Items == IntPtr.Zero || obj.Count == 0)
+            return result;
+
+        var size = Marshal.SizeOf<DracPluginField>();
+        for (nuint i = 0; i < obj.Count; i++)
+        {
+            var fieldPtr = IntPtr.Add(obj.Items, (int)(i * (nuint)size));
+            var field = Marshal.PtrToStructure<DracPluginField>(fieldPtr);
+            var key = TakeString(field.Key, free: false);
+            result[key] = PluginFieldValueToObject(field.Value);
         }
         return result;
     }
