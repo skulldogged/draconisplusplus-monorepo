@@ -157,6 +157,10 @@ namespace draconis::core::system {
 #if DRAC_ENABLE_PACKAGECOUNT
     types::Option<types::u64> packageCount;
 #endif
+#if DRAC_ENABLE_PLUGINS
+    // Plugin-contributed fields organized by plugin ID
+    plugin::PluginData pluginFields;
+#endif
   };
 
 } // namespace draconis::core::system
@@ -177,6 +181,9 @@ namespace glz {
     static constexpr detail::Object value = object(
 #if DRAC_ENABLE_PACKAGECOUNT
       "packageCount",    &T::packageCount,
+#endif
+#if DRAC_ENABLE_PLUGINS
+      "pluginFields",    &T::pluginFields,
 #endif
       "date",            &T::date,
       "host",            &T::host,

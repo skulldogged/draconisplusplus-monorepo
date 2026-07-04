@@ -24,6 +24,7 @@
 #include <fstream>
 #include <format>
 #include <glaze/glaze.hpp>
+#include <type_traits>
 
 // Required for DRAC_PLUGIN macro which uses draconis::utils::logging::LogLevel and SetLogLevelPtr
 #include "../Utils/Logging.hpp" // IWYU pragma: keep
@@ -282,107 +283,6 @@ namespace draconis::core::plugin {
     );
   }
 
-  inline auto AppendJsonEscaped(utils::types::String& output, utils::types::StringView input) -> void {
-    for (const char ch : input) {
-      switch (ch) {
-        case '"':
-          output += "\\\"";
-          break;
-        case '\\':
-          output += "\\\\";
-          break;
-        case '\n':
-          output += "\\n";
-          break;
-        case '\r':
-          output += "\\r";
-          break;
-        case '\t':
-          output += "\\t";
-          break;
-        default:
-          output += ch;
-          break;
-      }
-    }
-  }
-
-  inline auto AppendPluginFieldJson(utils::types::String& output, const PluginFieldValue& value) -> void {
-    using namespace utils::types;
-
-    std::visit(
-      [&output](const auto& inner) -> void {
-        using T = std::decay_t<decltype(inner)>;
-
-        if constexpr (std::same_as<T, bool>) {
-          output += inner ? "true" : "false";
-        } else if constexpr (std::same_as<T, i64> || std::same_as<T, u64>) {
-          output += std::to_string(inner);
-        } else if constexpr (std::same_as<T, f64>) {
-          output += std::format("{}", inner);
-        } else if constexpr (std::same_as<T, String>) {
-          output += '"';
-          AppendJsonEscaped(output, inner);
-          output += '"';
-        } else {
-          output += '[';
-          for (usize i = 0; i < inner.size(); ++i) {
-            if (i > 0)
-              output += ',';
-            AppendPluginFieldJson(output, inner[i]);
-          }
-          output += ']';
-        }
-      },
-      static_cast<const PluginFieldValueBase&>(value)
-    );
-  }
-
-  [[nodiscard]] inline auto PluginDataToJson(const PluginData& pluginData) -> utils::types::String {
-    using namespace utils::types;
-
-    String output;
-    output += '{';
-
-    usize pluginIndex = 0;
-    for (const auto& [pluginId, fields] : pluginData) {
-      if (pluginIndex++ > 0)
-        output += ',';
-
-      output += '"';
-      AppendJsonEscaped(output, pluginId);
-      output += "\":{";
-
-      usize fieldIndex = 0;
-      for (const auto& [fieldName, value] : fields) {
-        if (fieldIndex++ > 0)
-          output += ',';
-
-        output += '"';
-        AppendJsonEscaped(output, fieldName);
-        output += "\":";
-        AppendPluginFieldJson(output, value);
-      }
-
-      output += '}';
-    }
-
-    output += '}';
-    return output;
-  }
-
-  inline auto AppendPluginDataJsonProperty(utils::types::String& jsonObject, const PluginData& pluginData) -> void {
-    if (pluginData.empty())
-      return;
-
-    const auto closingBrace = jsonObject.find_last_of('}');
-    if (closingBrace == utils::types::String::npos)
-      return;
-
-    const bool hasExistingProperties = jsonObject.find_first_not_of(" \n\r\t{") < closingBrace;
-    jsonObject.insert(closingBrace, std::format("{}\"pluginFields\":{}", hasExistingProperties ? "," : "", PluginDataToJson(pluginData)));
-  }
-
   /**
    * @struct PluginContext
    * @brief Context passed to plugins during initialization
@@ -541,6 +441,27 @@ namespace draconis::core::plugin {
   // Legacy alias for backward compatibility during migration
   using ISystemInfoPlugin = IInfoProviderPlugin;
 } // namespace draconis::core::plugin
+
+namespace glz {
+  template <>
+  struct to<JSON, draconis::core::plugin::PluginFieldValue> {
+    template <auto Opts>
+    static auto op(
+      const draconis::core::plugin::PluginFieldValue& value,
+      auto&&                                         ctx,
+      auto&&                                         buffer,
+      auto&&                                         index
+    ) -> void {
+      std::visit(
+        [&](const auto& inner) -> void {
+          using Value = std::decay_t<decltype(inner)>;
+          to<JSON, Value>::template op<Opts>(inner, ctx, buffer, index);
+        },
+        static_cast<const draconis::core::plugin::PluginFieldValueBase&>(value)
+      );
+    }
+  };
+} // namespace glz
 
 #if defined(DRAC_STATIC_PLUGIN_BUILD)
   // For static plugin builds, no import/export needed
