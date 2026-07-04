@@ -314,10 +314,6 @@ namespace draconis::cli {
     DRAC_SET_OPTIONAL(packageCount);
 #endif
 
-#if DRAC_ENABLE_PLUGINS
-    output.pluginFields = data.pluginData;
-#endif
-
 #undef DRAC_SET_OPTIONAL
 
     String jsonStr;
@@ -329,8 +325,12 @@ namespace draconis::cli {
 
     if (errorContext)
       Print("Failed to write JSON output: {}", glz::format_error(errorContext, jsonStr));
-    else
+    else {
+#if DRAC_ENABLE_PLUGINS
+      draconis::core::plugin::AppendPluginDataJsonProperty(jsonStr, data.pluginData);
+#endif
       Print(jsonStr);
+    }
   }
 
   auto PrintCompactOutput(
