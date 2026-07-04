@@ -314,9 +314,6 @@ internal static class NativeMethods
     internal static extern DracErrorCode DracPluginCollectData(IntPtr plugin, IntPtr cache);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr DracPluginGetJson(IntPtr plugin);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern DracPluginFieldList DracPluginGetFields(IntPtr plugin);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]

@@ -793,18 +793,6 @@ impl Plugin {
     }
   }
 
-  pub fn get_json(&self) -> Result<String> {
-    let ptr = unsafe { sys::DracPluginGetJson(self.handle) };
-
-    if ptr.is_null() {
-      Err(ErrorCode::NotFound)
-    } else {
-      let s = unsafe { CStr::from_ptr(ptr).to_string_lossy().into_owned() };
-      unsafe { sys::DracFreeString(ptr) };
-      Ok(s)
-    }
-  }
-
   pub fn get_fields(&self) -> Result<std::collections::HashMap<String, String>> {
     let mut fields = unsafe { sys::DracPluginGetFields(self.handle) };
 

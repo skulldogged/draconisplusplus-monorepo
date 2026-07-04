@@ -290,10 +290,6 @@ NB_MODULE(draconis, module) {
     .def("collect_data", [](DracPlugin* self, DracCacheManager* cache) {
       check_error(DracPluginCollectData(self, cache), "plugin collect_data");
     }, nb::arg("cache"), "Collect data from the plugin")
-    .def("get_json", [](DracPlugin* self) -> std::string {
-      char* json = DracPluginGetJson(self);
-      return take_string(json);
-    }, "Get plugin data as JSON")
     .def("get_fields", [](DracPlugin* self) -> std::vector<std::pair<std::string, std::string>> {
       DracPluginFieldList fields = DracPluginGetFields(self);
       std::vector<std::pair<std::string, std::string>> result;

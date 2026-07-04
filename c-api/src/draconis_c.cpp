@@ -40,6 +40,7 @@ namespace {
 
     return nullptr;
   }
+
 } // namespace
 
 struct DracCacheManager {
@@ -683,17 +684,6 @@ extern "C" {
     return TO_C_ERROR(result.error());
   }
 
-  auto DracPluginGetJson(DracPlugin* plugin) -> char* {
-    if (!plugin || !plugin->inner)
-      return nullptr;
-
-    Result<String> result = plugin->inner->toJson();
-    if (!result.has_value())
-      return nullptr;
-
-    return DupString(*result);
-  }
-
   auto DracPluginGetFields(DracPlugin* plugin) -> DracPluginFieldList {
     DracPluginFieldList result = { nullptr, 0 };
 
@@ -806,10 +796,6 @@ extern "C" {
 
   auto DracPluginCollectData(DracPlugin* /*unused*/, DracCacheManager* /*unused*/) -> DracErrorCode {
     return DRAC_ERROR_NOT_SUPPORTED;
-  }
-
-  auto DracPluginGetJson(DracPlugin* /*unused*/) -> char* {
-    return nullptr;
   }
 
   auto DracPluginGetFields(DracPlugin* /*unused*/) -> DracPluginFieldList {

@@ -383,13 +383,6 @@ public sealed class Plugin : IDisposable
         ThrowIfError(code);
     }
 
-    public string? GetJson()
-    {
-        EnsureNotDisposed();
-        var ptr = NativeMethods.DracPluginGetJson(_handle);
-        return TakeString(ptr);
-    }
-
     public IReadOnlyDictionary<string, string> GetFields()
     {
         EnsureNotDisposed();

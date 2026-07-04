@@ -251,12 +251,8 @@ namespace {
       return {};
     }
 
-    [[nodiscard]] auto toJson() const -> Result<String> override {
-      return std::format(R"({{"value":"{}"}})", m_value);
-    }
-
     [[nodiscard]] auto getFields() const -> Map<String, String> override {
-      return { { "@NAME@_value", m_value } };
+      return { { "value", m_value } };
     }
 
     [[nodiscard]] auto getDisplayValue() const -> Result<String> override {

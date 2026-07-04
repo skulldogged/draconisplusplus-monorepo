@@ -377,16 +377,6 @@ extern "C" {
     return static_cast<jint>(DracPluginCollectData(plugin, cache));
   }
 
-  JNIEXPORT auto JNICALL Java_draconis_Plugin_nativeGetJson(JNIEnv* env, jobject /*obj*/, jlong handle) -> jstring {
-    auto* plugin = fromHandle<DracPlugin>(handle);
-    if (!plugin) return nullptr;
-    char* json = DracPluginGetJson(plugin);
-    if (!json) return nullptr;
-    jstring result = toJString(env, json);
-    DracFreeString(json);
-    return result;
-  }
-
   JNIEXPORT auto JNICALL Java_draconis_Plugin_nativeGetFields(JNIEnv* env, jobject /*obj*/, jlong handle) -> jobjectArray {
     auto* plugin = fromHandle<DracPlugin>(handle);
     if (!plugin) return nullptr;

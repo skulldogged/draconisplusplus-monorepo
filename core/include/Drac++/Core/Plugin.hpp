@@ -254,9 +254,9 @@ namespace draconis::core::plugin {
    * @class IInfoProviderPlugin
    * @brief Plugin interface for providing structured information
    *
-   * @details Info providers supply structured data that can be:
-   * - Serialized to JSON for --json output
-   * - Converted to key-value pairs for compact format templates
+   * @details Info providers supply structured fields that can be:
+   * - Consumed by output format plugins
+   * - Used in compact format templates
    * - Displayed in the UI
    *
    * Each plugin manages its own configuration file in the plugins config directory.
@@ -269,7 +269,7 @@ namespace draconis::core::plugin {
     /**
      * @brief Unique identifier for this provider
      * @return Provider ID (e.g., "weather", "media", "docker")
-     * @details Used as the key in JSON output and for compact format placeholders
+     * @details Used as the key in output data and for compact format placeholders
      */
     [[nodiscard]] virtual auto getProviderId() const -> utils::types::String = 0;
 
@@ -282,17 +282,11 @@ namespace draconis::core::plugin {
     virtual auto collectData(::PluginCache& cache) -> utils::types::Result<utils::types::Unit> = 0;
 
     /**
-     * @brief Serialize collected data to JSON
-     * @return JSON string representation of the data
-     * @details Used for --json output. Plugin defines its own JSON structure.
-     */
-    [[nodiscard]] virtual auto toJson() const -> utils::types::Result<utils::types::String> = 0;
-
-    /**
      * @brief Get data as key-value string pairs
      * @return Map of field names to string values
-     * @details Used for compact format templates (e.g., {weather_temp}, {weather_desc})
-     *          Keys should be prefixed with provider ID (e.g., "weather_temp", "weather_desc")
+     * @details Used by output format plugins and compact format templates.
+     *          Keys should be local field names (e.g., "temperature", "description");
+     *          Draconis++ nests them under the provider ID.
      */
     [[nodiscard]] virtual auto getFields() const -> utils::types::Map<utils::types::String, utils::types::String> = 0;
 

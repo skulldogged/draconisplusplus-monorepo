@@ -232,11 +232,6 @@ fn ErrorCode plugin_collect_data(Plugin plugin, CacheManager cache) {
   return draconis_raw::drac_plugin_collect_data(plugin, cache);
 }
 
-fn char* plugin_get_json(Plugin plugin) {
-  if (plugin == null) return null;
-  return draconis_raw::drac_plugin_get_json(plugin);
-}
-
 fn DracPluginFieldList plugin_get_fields(Plugin plugin) {
   DracPluginFieldList empty = { null, 0 };
   if (plugin == null) return empty;

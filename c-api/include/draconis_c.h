@@ -382,7 +382,6 @@ extern "C" {
 
   // Plugin data
   DRAC_C_API DracErrorCode DracPluginCollectData(DracPlugin* plugin, DracCacheManager* cache);
-  DRAC_C_API char* DracPluginGetJson(DracPlugin* plugin);
   DRAC_C_API DracPluginFieldList DracPluginGetFields(DracPlugin* plugin);
   DRAC_C_API char* DracPluginGetLastError(DracPlugin* plugin);
 

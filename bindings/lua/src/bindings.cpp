@@ -307,17 +307,6 @@ namespace {
       throwOnError(DracPluginCollectData(handle, cache), "Plugin collectData");
     }
 
-    [[nodiscard]] auto getJson() const -> std::string {
-      if (!handle)
-        return "";
-      char* json = DracPluginGetJson(handle);
-      if (!json)
-        return "";
-      std::string result = json;
-      DracFreeString(json);
-      return result;
-    }
-
     [[nodiscard]] auto getFields(sol::this_state state) const -> sol::table {
       sol::state_view lua(state);
       sol::table      result = lua.create_table();
@@ -470,7 +459,6 @@ DRAC_LUA_API auto luaopen_draconis(lua_State* State) -> int {
     "is_enabled",          &Plugin::isEnabled,
     "is_ready",            &Plugin::isReady,
     "collect_data",        [](Plugin& self, SystemInfo& sys) { self.collectData(sys.mgr); },
-    "get_json",            &Plugin::getJson,
     "get_fields",          &Plugin::getFields,
     "get_last_error",      &Plugin::getLastError
   );

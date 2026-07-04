@@ -169,7 +169,6 @@ extern fn DracErrorCode drac_plugin_initialize(DracPlugin* plugin, DracCacheMana
 extern fn bool drac_plugin_is_enabled(DracPlugin* plugin) @cname("DracPluginIsEnabled");
 extern fn bool drac_plugin_is_ready(DracPlugin* plugin) @cname("DracPluginIsReady");
 extern fn DracErrorCode drac_plugin_collect_data(DracPlugin* plugin, DracCacheManager* cache) @cname("DracPluginCollectData");
-extern fn char* drac_plugin_get_json(DracPlugin* plugin) @cname("DracPluginGetJson");
 extern fn DracPluginFieldList drac_plugin_get_fields(DracPlugin* plugin) @cname("DracPluginGetFields");
 extern fn char* drac_plugin_get_last_error(DracPlugin* plugin) @cname("DracPluginGetLastError");
 extern fn void drac_free_plugin_info_list(DracPluginInfoList* list) @cname("DracFreePluginInfoList");
