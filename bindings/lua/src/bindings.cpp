@@ -32,6 +32,29 @@ namespace {
     }
   }
 
+  auto pluginFieldValueToLua(sol::state_view lua, const DracPluginFieldValue& value) -> sol::object {
+    switch (value.type) {
+      case DRAC_PLUGIN_FIELD_BOOL:
+        return sol::make_object(lua, value.boolValue);
+      case DRAC_PLUGIN_FIELD_I64:
+        return sol::make_object(lua, value.i64Value);
+      case DRAC_PLUGIN_FIELD_U64:
+        return sol::make_object(lua, value.u64Value);
+      case DRAC_PLUGIN_FIELD_F64:
+        return sol::make_object(lua, value.f64Value);
+      case DRAC_PLUGIN_FIELD_STRING:
+        return sol::make_object(lua, value.stringValue ? value.stringValue : "");
+      case DRAC_PLUGIN_FIELD_ARRAY: {
+        sol::table result = lua.create_table();
+        for (size_t i = 0; i < value.arrayValue.count; ++i)
+          result[i + 1] = pluginFieldValueToLua(lua, value.arrayValue.items[i]);
+        return result;
+      }
+    }
+
+    return sol::nil;
+  }
+
   void check(DracErrorCode code) {
     if (code == DRAC_SUCCESS)
       return;
@@ -319,8 +342,8 @@ namespace {
 
       for (size_t i = 0; i < fields.count; ++i) {
         const auto& field = fields.items[i];
-        if (field.key && field.value)
-          result[field.key] = field.value;
+        if (field.key)
+          result[field.key] = pluginFieldValueToLua(lua, field.value);
       }
 
       DracFreePluginFieldList(&fields);

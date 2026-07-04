@@ -31,6 +31,23 @@ pub const DRAC_BATTERY_UNKNOWN: DracBatteryStatus = 0;
 pub const DRAC_BATTERY_CHARGING: DracBatteryStatus = 1;
 pub const DRAC_BATTERY_DISCHARGING: DracBatteryStatus = 2;
 pub const DRAC_BATTERY_FULL: DracBatteryStatus = 3;
+
+const DRAC_PLUGIN_FIELD_BOOL: u32 = 0;
+const DRAC_PLUGIN_FIELD_I64: u32 = 1;
+const DRAC_PLUGIN_FIELD_U64: u32 = 2;
+const DRAC_PLUGIN_FIELD_F64: u32 = 3;
+const DRAC_PLUGIN_FIELD_STRING: u32 = 4;
+const DRAC_PLUGIN_FIELD_ARRAY: u32 = 5;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PluginFieldValue {
+  Bool(bool),
+  I64(i64),
+  U64(u64),
+  F64(f64),
+  String(String),
+  Array(Vec<PluginFieldValue>),
+}
 pub const DRAC_BATTERY_NOT_PRESENT: DracBatteryStatus = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -793,7 +810,47 @@ impl Plugin {
     }
   }
 
-  pub fn get_fields(&self) -> Result<std::collections::HashMap<String, String>> {
+  fn plugin_field_value_to_rust(value: &sys::DracPluginFieldValue) -> PluginFieldValue {
+    match value.type_ as u32 {
+      DRAC_PLUGIN_FIELD_BOOL => {
+        PluginFieldValue::Bool(unsafe { value.__bindgen_anon_1.boolValue })
+      }
+      DRAC_PLUGIN_FIELD_I64 => {
+        PluginFieldValue::I64(unsafe { value.__bindgen_anon_1.i64Value })
+      }
+      DRAC_PLUGIN_FIELD_U64 => {
+        PluginFieldValue::U64(unsafe { value.__bindgen_anon_1.u64Value })
+      }
+      DRAC_PLUGIN_FIELD_F64 => {
+        PluginFieldValue::F64(unsafe { value.__bindgen_anon_1.f64Value })
+      }
+      DRAC_PLUGIN_FIELD_STRING => {
+        let ptr = unsafe { value.__bindgen_anon_1.stringValue };
+        PluginFieldValue::String(if ptr.is_null() {
+          String::new()
+        } else {
+          unsafe { CStr::from_ptr(ptr) }
+            .to_string_lossy()
+            .into_owned()
+        })
+      }
+      DRAC_PLUGIN_FIELD_ARRAY => {
+        let array = unsafe { value.__bindgen_anon_1.arrayValue };
+        let mut items = Vec::new();
+        if !array.items.is_null() && array.count > 0 {
+          items.reserve(array.count);
+          for i in 0..array.count {
+            let item = unsafe { &*array.items.add(i) };
+            items.push(Self::plugin_field_value_to_rust(item));
+          }
+        }
+        PluginFieldValue::Array(items)
+      }
+      _ => PluginFieldValue::String(String::new()),
+    }
+  }
+
+  pub fn get_fields(&self) -> Result<std::collections::HashMap<String, PluginFieldValue>> {
     let mut fields = unsafe { sys::DracPluginGetFields(self.handle) };
 
     let mut result = std::collections::HashMap::new();
@@ -811,13 +868,7 @@ impl Plugin {
           .to_string_lossy()
           .into_owned()
       };
-      let value = if field.value.is_null() {
-        String::new()
-      } else {
-        unsafe { CStr::from_ptr(field.value) }
-          .to_string_lossy()
-          .into_owned()
-      };
+      let value = Self::plugin_field_value_to_rust(&field.value);
       result.insert(key, value);
     }
 

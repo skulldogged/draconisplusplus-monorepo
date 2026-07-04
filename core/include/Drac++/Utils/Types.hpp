@@ -22,6 +22,7 @@
 #include <string>                   // std::string (String, StringView)
 #include <string_view>              // std::string_view (StringView)
 #include <utility>                  // std::pair (Pair)
+#include <variant>                  // std::variant (Variant)
 #include <vector>                   // std::vector (Vec)
 
 namespace draconis::utils {
@@ -282,6 +283,15 @@ namespace draconis::utils {
      */
     template <typename... Ts>
     using Tuple = std::tuple<Ts...>;
+
+    /**
+     * @brief Alias for std::variant<Ts...>.
+     *
+     * Represents one of several possible value types.
+     * @tparam Ts The possible value types.
+     */
+    template <typename... Ts>
+    using Variant = std::variant<Ts...>;
 
     /**
      * @brief Alias for std::map<Key, Val>.

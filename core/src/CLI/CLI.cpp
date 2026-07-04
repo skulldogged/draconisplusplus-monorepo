@@ -509,8 +509,8 @@ namespace draconis::cli {
         const auto fields = infoProviderPlugin->getFields();
         if (!fields.empty()) {
           Print("\nProvided Fields:\n");
-          for (const auto& [key, description] : fields)
-            Print("  • {} - {}\n", key, description);
+          for (const auto& [key, value] : fields)
+            Print("  • {} - {}\n", key, draconis::core::plugin::PluginFieldToString(value));
         }
       }
     }

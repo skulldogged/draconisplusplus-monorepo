@@ -41,6 +41,76 @@ namespace {
     return nullptr;
   }
 
+  auto ToCPluginFieldValue(const PluginFieldValue& value) -> DracPluginFieldValue {
+    return std::visit(
+      [](const auto& inner) -> DracPluginFieldValue {
+        using T = std::decay_t<decltype(inner)>;
+
+        if constexpr (std::same_as<T, bool>) {
+          return {
+            .type      = DRAC_PLUGIN_FIELD_BOOL,
+            .boolValue = inner,
+          };
+        } else if constexpr (std::same_as<T, i64>) {
+          return {
+            .type     = DRAC_PLUGIN_FIELD_I64,
+            .i64Value = inner,
+          };
+        } else if constexpr (std::same_as<T, u64>) {
+          return {
+            .type     = DRAC_PLUGIN_FIELD_U64,
+            .u64Value = inner,
+          };
+        } else if constexpr (std::same_as<T, f64>) {
+          return {
+            .type     = DRAC_PLUGIN_FIELD_F64,
+            .f64Value = inner,
+          };
+        } else if constexpr (std::same_as<T, String>) {
+          return {
+            .type        = DRAC_PLUGIN_FIELD_STRING,
+            .stringValue = DupString(inner),
+          };
+        } else {
+          DracPluginFieldValueArray array {
+            .items = new DracPluginFieldValue[inner.size()],
+            .count = inner.size(),
+          };
+
+          for (usize i = 0; i < inner.size(); ++i)
+            array.items[i] = ToCPluginFieldValue(inner[i]);
+
+          return {
+            .type       = DRAC_PLUGIN_FIELD_ARRAY,
+            .arrayValue = array,
+          };
+        }
+      },
+      static_cast<const PluginFieldValueBase&>(value)
+    );
+  }
+
+  auto FreePluginFieldValue(DracPluginFieldValue& value) -> void {
+    switch (value.type) {
+      case DRAC_PLUGIN_FIELD_STRING:
+        delete[] value.stringValue;
+        value.stringValue = nullptr;
+        break;
+      case DRAC_PLUGIN_FIELD_ARRAY:
+        for (size_t i = 0; i < value.arrayValue.count; ++i)
+          FreePluginFieldValue(value.arrayValue.items[i]);
+        delete[] value.arrayValue.items;
+        value.arrayValue.items = nullptr;
+        value.arrayValue.count = 0;
+        break;
+      case DRAC_PLUGIN_FIELD_BOOL:
+      case DRAC_PLUGIN_FIELD_I64:
+      case DRAC_PLUGIN_FIELD_U64:
+      case DRAC_PLUGIN_FIELD_F64:
+        break;
+    }
+  }
+
 } // namespace
 
 struct DracCacheManager {
@@ -690,14 +760,14 @@ extern "C" {
     if (!plugin || !plugin->inner)
       return result;
 
-    Map<String, String> fields = plugin->inner->getFields();
+    PluginFields fields = plugin->inner->getFields();
     result.count               = fields.size();
     result.items               = new DracPluginField[fields.size()];
 
     size_t idx = 0;
     for (const auto& [key, value] : fields) {
       result.items[idx].key   = DupString(key);
-      result.items[idx].value = DupString(value);
+      result.items[idx].value = ToCPluginFieldValue(value);
       ++idx;
     }
 
@@ -721,7 +791,7 @@ extern "C" {
 
     for (size_t i = 0; i < list->count; ++i) {
       delete[] list->items[i].key;
-      delete[] list->items[i].value;
+      FreePluginFieldValue(list->items[i].value);
     }
 
     delete[] list->items;

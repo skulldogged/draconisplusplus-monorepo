@@ -24,6 +24,29 @@ namespace {
     DracFreeString(ptr);
     return result;
   }
+
+  nb::object plugin_field_value_to_python(const DracPluginFieldValue& value) {
+    switch (value.type) {
+      case DRAC_PLUGIN_FIELD_BOOL:
+        return nb::bool_(value.boolValue);
+      case DRAC_PLUGIN_FIELD_I64:
+        return nb::int_(value.i64Value);
+      case DRAC_PLUGIN_FIELD_U64:
+        return nb::int_(value.u64Value);
+      case DRAC_PLUGIN_FIELD_F64:
+        return nb::float_(value.f64Value);
+      case DRAC_PLUGIN_FIELD_STRING:
+        return nb::str(value.stringValue ? value.stringValue : "");
+      case DRAC_PLUGIN_FIELD_ARRAY: {
+        nb::list result;
+        for (size_t i = 0; i < value.arrayValue.count; ++i)
+          result.append(plugin_field_value_to_python(value.arrayValue.items[i]));
+        return std::move(result);
+      }
+    }
+
+    return nb::none();
+  }
 }
 
 NB_MODULE(draconis, module) {
@@ -290,20 +313,17 @@ NB_MODULE(draconis, module) {
     .def("collect_data", [](DracPlugin* self, DracCacheManager* cache) {
       check_error(DracPluginCollectData(self, cache), "plugin collect_data");
     }, nb::arg("cache"), "Collect data from the plugin")
-    .def("get_fields", [](DracPlugin* self) -> std::vector<std::pair<std::string, std::string>> {
+    .def("get_fields", [](DracPlugin* self) -> nb::dict {
       DracPluginFieldList fields = DracPluginGetFields(self);
-      std::vector<std::pair<std::string, std::string>> result;
-      result.reserve(fields.count);
+      nb::dict result;
       for (size_t i = 0; i < fields.count; ++i) {
         const auto& field = fields.items[i];
-        result.emplace_back(
-          field.key ? field.key : "",
-          field.value ? field.value : ""
-        );
+        if (field.key)
+          result[nb::str(field.key)] = plugin_field_value_to_python(field.value);
       }
       DracFreePluginFieldList(&fields);
       return result;
-    }, "Get plugin data as key-value pairs")
+    }, "Get plugin data as typed key-value pairs")
     .def("get_last_error", [](DracPlugin* self) -> std::string {
       char* err = DracPluginGetLastError(self);
       return take_string(err);

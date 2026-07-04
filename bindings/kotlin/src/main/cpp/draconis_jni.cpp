@@ -21,6 +21,44 @@ namespace {
     return env->NewStringUTF(cstr);
   }
 
+  auto pluginFieldValueToJava(JNIEnv* env, const DracPluginFieldValue& value) -> jobject {
+    switch (value.type) {
+      case DRAC_PLUGIN_FIELD_BOOL: {
+        jclass    cls  = env->FindClass("java/lang/Boolean");
+        jmethodID ctor = env->GetMethodID(cls, "<init>", "(Z)V");
+        return env->NewObject(cls, ctor, static_cast<jboolean>(value.boolValue));
+      }
+      case DRAC_PLUGIN_FIELD_I64: {
+        jclass    cls  = env->FindClass("java/lang/Long");
+        jmethodID ctor = env->GetMethodID(cls, "<init>", "(J)V");
+        return env->NewObject(cls, ctor, static_cast<jlong>(value.i64Value));
+      }
+      case DRAC_PLUGIN_FIELD_U64: {
+        jclass    cls  = env->FindClass("java/lang/Long");
+        jmethodID ctor = env->GetMethodID(cls, "<init>", "(J)V");
+        return env->NewObject(cls, ctor, static_cast<jlong>(value.u64Value));
+      }
+      case DRAC_PLUGIN_FIELD_F64: {
+        jclass    cls  = env->FindClass("java/lang/Double");
+        jmethodID ctor = env->GetMethodID(cls, "<init>", "(D)V");
+        return env->NewObject(cls, ctor, static_cast<jdouble>(value.f64Value));
+      }
+      case DRAC_PLUGIN_FIELD_STRING:
+        return toJString(env, value.stringValue);
+      case DRAC_PLUGIN_FIELD_ARRAY: {
+        jclass    listClass = env->FindClass("java/util/ArrayList");
+        jmethodID ctor      = env->GetMethodID(listClass, "<init>", "()V");
+        jmethodID add       = env->GetMethodID(listClass, "add", "(Ljava/lang/Object;)Z");
+        jobject   list      = env->NewObject(listClass, ctor);
+        for (size_t i = 0; i < value.arrayValue.count; ++i)
+          env->CallBooleanMethod(list, add, pluginFieldValueToJava(env, value.arrayValue.items[i]));
+        return list;
+      }
+    }
+
+    return nullptr;
+  }
+
   template <typename Fn>
   auto getStringResult(JNIEnv* env, DracCacheManager* mgr, Fn func, const char* context) -> jstring {
     char* out  = nullptr;
@@ -377,7 +415,7 @@ extern "C" {
     return static_cast<jint>(DracPluginCollectData(plugin, cache));
   }
 
-  JNIEXPORT auto JNICALL Java_draconis_Plugin_nativeGetFields(JNIEnv* env, jobject /*obj*/, jlong handle) -> jobjectArray {
+  JNIEXPORT auto JNICALL Java_draconis_Plugin_nativeGetFields(JNIEnv* env, jobject /*obj*/, jlong handle) -> jobject {
     auto* plugin = fromHandle<DracPlugin>(handle);
     if (!plugin) return nullptr;
     DracPluginFieldList fields = DracPluginGetFields(plugin);
@@ -395,7 +433,7 @@ extern "C" {
     for (size_t i = 0; i < fields.count; ++i) {
       const auto& field = fields.items[i];
       jstring key       = field.key ? toJString(env, field.key) : nullptr;
-      jstring value     = field.value ? toJString(env, field.value) : nullptr;
+      jobject value     = pluginFieldValueToJava(env, field.value);
       if (key && value)
         env->CallObjectMethod(map, put, key, value);
     }

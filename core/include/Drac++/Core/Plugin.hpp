@@ -19,8 +19,10 @@
 #pragma once
 
 #include <chrono>
+#include <concepts>
 #include <filesystem>
 #include <fstream>
+#include <format>
 #include <glaze/glaze.hpp>
 
 // Required for DRAC_PLUGIN macro which uses draconis::utils::logging::LogLevel and SetLogLevelPtr
@@ -204,6 +206,82 @@ namespace draconis::core::plugin {
     PluginDependencies   dependencies;
   };
 
+  struct PluginFieldValue;
+
+  using PluginFieldArray = utils::types::Vec<PluginFieldValue>;
+
+  using PluginFieldValueBase = utils::types::Variant<
+    bool,
+    utils::types::i64,
+    utils::types::u64,
+    utils::types::f64,
+    utils::types::String,
+    PluginFieldArray>;
+
+  struct PluginFieldValue : PluginFieldValueBase {
+    using PluginFieldValueBase::PluginFieldValueBase;
+
+    PluginFieldValue(const char* value) : PluginFieldValueBase(utils::types::String { value }) {}
+    PluginFieldValue(utils::types::StringView value) : PluginFieldValueBase(utils::types::String { value }) {}
+    PluginFieldValue(const utils::types::Vec<utils::types::String>& values) : PluginFieldValueBase(ToArray(values)) {}
+    PluginFieldValue(utils::types::Vec<utils::types::String>&& values) : PluginFieldValueBase(ToArray(std::move(values))) {}
+
+   private:
+    [[nodiscard]] static auto ToArray(const utils::types::Vec<utils::types::String>& values) -> PluginFieldArray {
+      PluginFieldArray result;
+      result.reserve(values.size());
+      for (const auto& value : values)
+        result.emplace_back(value);
+      return result;
+    }
+
+    [[nodiscard]] static auto ToArray(utils::types::Vec<utils::types::String>&& values) -> PluginFieldArray {
+      PluginFieldArray result;
+      result.reserve(values.size());
+      for (auto&& value : values)
+        result.emplace_back(std::move(value));
+      return result;
+    }
+  };
+
+  using PluginFields = utils::types::Map<utils::types::String, PluginFieldValue>;
+  using PluginData   = utils::types::Map<utils::types::String, PluginFields>;
+
+  [[nodiscard]] inline auto PluginFieldToString(const PluginFieldValue& value) -> utils::types::String {
+    using namespace utils::types;
+
+    return std::visit(
+      [](const auto& inner) -> String {
+        using T = std::decay_t<decltype(inner)>;
+
+        if constexpr (std::same_as<T, bool>)
+          return inner ? "true" : "false";
+        else if constexpr (std::same_as<T, i64> || std::same_as<T, u64>)
+          return std::to_string(inner);
+        else if constexpr (std::same_as<T, f64>)
+          return std::format("{}", inner);
+        else if constexpr (std::same_as<T, String>)
+          return inner;
+        else {
+          String result;
+          usize  size = 0;
+          for (const PluginFieldValue& item : inner)
+            size += PluginFieldToString(item).size() + 2;
+          result.reserve(size);
+
+          for (usize i = 0; i < inner.size(); ++i) {
+            if (i > 0)
+              result += ", ";
+            result += PluginFieldToString(inner[i]);
+          }
+
+          return result;
+        }
+      },
+      static_cast<const PluginFieldValueBase&>(value)
+    );
+  }
+
   /**
    * @struct PluginContext
    * @brief Context passed to plugins during initialization
@@ -282,13 +360,13 @@ namespace draconis::core::plugin {
     virtual auto collectData(::PluginCache& cache) -> utils::types::Result<utils::types::Unit> = 0;
 
     /**
-     * @brief Get data as key-value string pairs
-     * @return Map of field names to string values
+     * @brief Get data as typed key-value pairs
+     * @return Map of field names to typed values
      * @details Used by output format plugins and compact format templates.
      *          Keys should be local field names (e.g., "temperature", "description");
      *          Draconis++ nests them under the provider ID.
      */
-    [[nodiscard]] virtual auto getFields() const -> utils::types::Map<utils::types::String, utils::types::String> = 0;
+    [[nodiscard]] virtual auto getFields() const -> PluginFields = 0;
 
     /**
      * @brief Get a single-line display string for UI
@@ -342,7 +420,7 @@ namespace draconis::core::plugin {
     virtual auto formatOutput(
       const utils::types::String&                                                                                   formatName,
       const utils::types::Map<utils::types::String, utils::types::String>&                                          data,
-      const utils::types::Map<utils::types::String, utils::types::Map<utils::types::String, utils::types::String>>& pluginData
+      const PluginData&                                                                                             pluginData
     ) const -> utils::types::Result<utils::types::String> = 0;
 
     /**

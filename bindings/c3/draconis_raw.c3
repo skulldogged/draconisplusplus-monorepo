@@ -115,9 +115,37 @@ struct DracPluginInfoList {
   usz count;
 }
 
+enum DracPluginFieldValueType {
+  DRAC_PLUGIN_FIELD_BOOL,
+  DRAC_PLUGIN_FIELD_I64,
+  DRAC_PLUGIN_FIELD_U64,
+  DRAC_PLUGIN_FIELD_F64,
+  DRAC_PLUGIN_FIELD_STRING,
+  DRAC_PLUGIN_FIELD_ARRAY,
+}
+
+struct DracPluginFieldValueArray {
+  DracPluginFieldValue* items;
+  usz count;
+}
+
+union DracPluginFieldValueUnion {
+  bool bool_value;
+  long i64_value;
+  ulong u64_value;
+  double f64_value;
+  char* string_value;
+  DracPluginFieldValueArray array_value;
+}
+
+struct DracPluginFieldValue {
+  DracPluginFieldValueType type;
+  DracPluginFieldValueUnion value;
+}
+
 struct DracPluginField {
   char* key;
-  char* value;
+  DracPluginFieldValue value;
 }
 
 struct DracPluginFieldList {

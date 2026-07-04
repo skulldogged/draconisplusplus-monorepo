@@ -347,9 +347,37 @@ extern "C" {
    */
   DRAC_C_API size_t DracInitStaticPlugins(void);
 
+  typedef enum DracPluginFieldValueType {
+    DRAC_PLUGIN_FIELD_BOOL,
+    DRAC_PLUGIN_FIELD_I64,
+    DRAC_PLUGIN_FIELD_U64,
+    DRAC_PLUGIN_FIELD_F64,
+    DRAC_PLUGIN_FIELD_STRING,
+    DRAC_PLUGIN_FIELD_ARRAY,
+  } DracPluginFieldValueType;
+
+  typedef struct DracPluginFieldValue DracPluginFieldValue;
+
+  typedef struct DracPluginFieldValueArray {
+    DracPluginFieldValue* items;
+    size_t count;
+  } DracPluginFieldValueArray;
+
+  struct DracPluginFieldValue {
+    DracPluginFieldValueType type;
+    union {
+      bool                      boolValue;
+      int64_t                   i64Value;
+      uint64_t                  u64Value;
+      double                    f64Value;
+      char*                     stringValue;
+      DracPluginFieldValueArray arrayValue;
+    };
+  };
+
   typedef struct DracPluginField {
-    char* key;
-    char* value;
+    char*                key;
+    DracPluginFieldValue value;
   } DracPluginField;
 
   typedef struct DracPluginFieldList {

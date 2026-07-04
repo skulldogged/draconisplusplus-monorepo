@@ -1199,7 +1199,7 @@ namespace draconis::ui {
         if (fieldName) {
           if (const auto pluginDataIt = data.pluginData.find(pluginId); pluginDataIt != data.pluginData.end())
             if (const auto valueIt = pluginDataIt->second.find(*fieldName); valueIt != pluginDataIt->second.end())
-              value = valueIt->second;
+              value = draconis::core::plugin::PluginFieldToString(valueIt->second);
 
           if (!value)
             return None;

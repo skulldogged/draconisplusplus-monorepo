@@ -192,7 +192,7 @@ namespace draconis::core::system {
 #if DRAC_ENABLE_PLUGINS
     for (const auto& [pluginId, fields] : pluginData)
       for (const auto& [fieldName, value] : fields)
-        data[std::format("plugin_{}_{}", pluginId, fieldName)] = value;
+        data[std::format("plugin_{}_{}", pluginId, fieldName)] = draconis::core::plugin::PluginFieldToString(value);
 #endif
 
     return data;
@@ -266,7 +266,7 @@ namespace draconis::core::system {
           // Create entry for this plugin and move data efficiently
           auto& pluginFields = pluginData[pluginId];
           for (auto&& [key, value] : fields) {
-            debug_log("Adding plugin field: {}[{}] = {}", pluginId, key, value);
+            debug_log("Adding plugin field: {}[{}] = {}", pluginId, key, draconis::core::plugin::PluginFieldToString(value));
             pluginFields.emplace(key, std::move(value));
           }
 

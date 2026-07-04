@@ -383,13 +383,43 @@ public sealed class Plugin : IDisposable
         ThrowIfError(code);
     }
 
-    public IReadOnlyDictionary<string, string> GetFields()
+    private static object? PluginFieldValueToObject(DracPluginFieldValue value)
+    {
+        return value.Type switch
+        {
+            DracPluginFieldValueType.Bool => value.Value.BoolValue != 0,
+            DracPluginFieldValueType.I64 => value.Value.I64Value,
+            DracPluginFieldValueType.U64 => value.Value.U64Value,
+            DracPluginFieldValueType.F64 => value.Value.F64Value,
+            DracPluginFieldValueType.String => TakeString(value.Value.StringValue, free: false),
+            DracPluginFieldValueType.Array => PluginFieldArrayToObjectArray(value.Value.ArrayValue),
+            _ => null,
+        };
+    }
+
+    private static object?[] PluginFieldArrayToObjectArray(DracPluginFieldValueArray array)
+    {
+        var result = new object?[checked((int)array.Count)];
+        if (array.Items == IntPtr.Zero || array.Count == 0)
+            return result;
+
+        var size = Marshal.SizeOf<DracPluginFieldValue>();
+        for (nuint i = 0; i < array.Count; i++)
+        {
+            var valuePtr = IntPtr.Add(array.Items, (int)(i * (nuint)size));
+            var value = Marshal.PtrToStructure<DracPluginFieldValue>(valuePtr);
+            result[i] = PluginFieldValueToObject(value);
+        }
+        return result;
+    }
+
+    public IReadOnlyDictionary<string, object?> GetFields()
     {
         EnsureNotDisposed();
         var list = NativeMethods.DracPluginGetFields(_handle);
         try
         {
-            var result = new Dictionary<string, string>();
+            var result = new Dictionary<string, object?>();
             if (list.Items == IntPtr.Zero || list.Count == 0)
                 return result;
 
@@ -399,8 +429,7 @@ public sealed class Plugin : IDisposable
                 var fieldPtr = IntPtr.Add(list.Items, (int)(i * (nuint)size));
                 var field = Marshal.PtrToStructure<DracPluginField>(fieldPtr);
                 var key = TakeString(field.Key, free: false) ?? "";
-                var value = TakeString(field.Value, free: false) ?? "";
-                result[key] = value;
+                result[key] = PluginFieldValueToObject(field.Value);
             }
             return result;
         }

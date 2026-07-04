@@ -251,7 +251,7 @@ namespace {
       return {};
     }
 
-    [[nodiscard]] auto getFields() const -> Map<String, String> override {
+    [[nodiscard]] auto getFields() const -> PluginFields override {
       return { { "value", m_value } };
     }
 

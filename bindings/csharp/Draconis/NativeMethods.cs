@@ -142,10 +142,45 @@ internal struct DracPluginInfoList
 }
 
 [StructLayout(LayoutKind.Sequential)]
+internal struct DracPluginFieldValueArray
+{
+    public IntPtr Items;
+    public nuint Count;
+}
+
+internal enum DracPluginFieldValueType
+{
+    Bool,
+    I64,
+    U64,
+    F64,
+    String,
+    Array,
+}
+
+[StructLayout(LayoutKind.Explicit)]
+internal struct DracPluginFieldValueUnion
+{
+    [FieldOffset(0)] public byte BoolValue;
+    [FieldOffset(0)] public long I64Value;
+    [FieldOffset(0)] public ulong U64Value;
+    [FieldOffset(0)] public double F64Value;
+    [FieldOffset(0)] public IntPtr StringValue;
+    [FieldOffset(0)] public DracPluginFieldValueArray ArrayValue;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct DracPluginFieldValue
+{
+    public DracPluginFieldValueType Type;
+    public DracPluginFieldValueUnion Value;
+}
+
+[StructLayout(LayoutKind.Sequential)]
 internal struct DracPluginField
 {
     public IntPtr Key;
-    public IntPtr Value;
+    public DracPluginFieldValue Value;
 }
 
 [StructLayout(LayoutKind.Sequential)]

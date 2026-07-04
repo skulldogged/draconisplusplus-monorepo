@@ -53,7 +53,7 @@ namespace draconis::core::system {
 
 #if DRAC_ENABLE_PLUGINS
     // Plugin-contributed data organized by plugin ID
-    types::Map<types::String, types::Map<types::String, types::String>> pluginData;
+    plugin::PluginData pluginData;
 
     struct PluginDisplayInfo {
       types::String                icon;
@@ -73,7 +73,7 @@ namespace draconis::core::system {
     [[nodiscard]] auto getPluginField(const types::String& pluginId, const types::String& fieldName) const noexcept -> types::String {
       if (auto pluginIter = pluginData.find(pluginId); pluginIter != pluginData.end())
         if (auto fieldIter = pluginIter->second.find(fieldName); fieldIter != pluginIter->second.end())
-          return fieldIter->second;
+          return plugin::PluginFieldToString(fieldIter->second);
 
       return {};
     }
@@ -159,7 +159,7 @@ namespace draconis::core::system {
 #endif
 #if DRAC_ENABLE_PLUGINS
     // Plugin-contributed fields organized by plugin ID
-    types::Map<types::String, types::Map<types::String, types::String>> pluginFields;
+    plugin::PluginData pluginFields;
 #endif
   };
 
