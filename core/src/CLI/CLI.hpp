@@ -5,7 +5,7 @@
  * This file contains utility functions for CLI features including:
  * - Benchmark timing and reporting
  * - Shell completion generation
- * - Various output format helpers (doctor, JSON, compact)
+ * - Various output format helpers (doctor, compact, plugins)
  */
 
 #pragma once
@@ -48,16 +48,6 @@ namespace draconis::cli {
    * @param data System information data
    */
   auto PrintDoctorReport(const core::system::SystemInfo& data) -> utils::types::Unit;
-
-  /**
-   * @brief Print system information in JSON format
-   * @param data System information data
-   * @param prettyJson Whether to pretty-print the JSON
-   */
-  auto PrintJsonOutput(
-    const core::system::SystemInfo& data,
-    bool                            prettyJson
-  ) -> utils::types::Unit;
 
   /**
    * @brief Print system information in compact single-line format using a template string

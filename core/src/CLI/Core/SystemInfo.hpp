@@ -1,7 +1,5 @@
 #pragma once
 
-#include <glaze/glaze.hpp>
-
 #include <Drac++/Core/System.hpp>
 
 #if DRAC_ENABLE_PLUGINS
@@ -140,65 +138,4 @@ namespace draconis::core::system {
 #endif
   };
 
-  struct JsonInfo {
-    types::Option<types::String>        date;
-    types::Option<types::String>        host;
-    types::Option<types::String>        kernelVersion;
-    types::Option<types::OSInfo>        operatingSystem;
-    types::Option<types::ResourceUsage> memInfo;
-    types::Option<types::String>        desktopEnv;
-    types::Option<types::String>        windowMgr;
-    types::Option<types::ResourceUsage> diskUsage;
-    types::Option<types::String>        shell;
-    types::Option<types::String>        cpuModel;
-    types::Option<types::CPUCores>      cpuCores;
-    types::Option<types::String>        gpuModel;
-    types::Option<types::i64>           uptimeSeconds;
-#if DRAC_ENABLE_PACKAGECOUNT
-    types::Option<types::u64> packageCount;
-#endif
-#if DRAC_ENABLE_PLUGINS
-    // Plugin-contributed fields organized by plugin ID
-    plugin::PluginData pluginFields;
-#endif
-  };
-
 } // namespace draconis::core::system
-
-namespace glz {
-  template <>
-  struct meta<draconis::utils::types::ResourceUsage> {
-    using T = draconis::utils::types::ResourceUsage;
-
-    static constexpr detail::Object value = object("usedBytes", &T::usedBytes, "totalBytes", &T::totalBytes);
-  };
-
-  template <>
-  struct meta<draconis::core::system::JsonInfo> {
-    using T = draconis::core::system::JsonInfo;
-
-    // clang-format off
-    static constexpr detail::Object value = object(
-#if DRAC_ENABLE_PACKAGECOUNT
-      "packageCount",    &T::packageCount,
-#endif
-#if DRAC_ENABLE_PLUGINS
-      "pluginFields",    &T::pluginFields,
-#endif
-      "date",            &T::date,
-      "host",            &T::host,
-      "kernelVersion",   &T::kernelVersion,
-      "operatingSystem", &T::operatingSystem,
-      "memInfo",         &T::memInfo,
-      "desktopEnv",      &T::desktopEnv,
-      "windowMgr",       &T::windowMgr,
-      "diskUsage",       &T::diskUsage,
-      "shell",           &T::shell,
-      "cpuModel",        &T::cpuModel,
-      "cpuCores",        &T::cpuCores,
-      "gpuModel",        &T::gpuModel,
-      "uptimeSeconds",   &T::uptimeSeconds
-    );
-    // clang-format on
-  };
-} // namespace glz

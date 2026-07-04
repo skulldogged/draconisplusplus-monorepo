@@ -44,9 +44,7 @@ struct CliOptions {
   bool ignoreCacheRun = false;
 
   // Output options
-  bool   noAscii    = false;
-  bool   jsonOutput = false;
-  bool   prettyJson = false;
+  bool   noAscii = false;
   String outputFormat;
   String compactFormat;
 
@@ -127,20 +125,8 @@ auto main(const i32 argc, CStr* argv[]) -> i32 try {
       .bindTo(opts.noAscii);
 
     parser
-      .addArguments("--json")
-      .help("Output system information in JSON format. Overrides --no-ascii.")
-      .flag()
-      .bindTo(opts.jsonOutput);
-
-    parser
-      .addArguments("--pretty")
-      .help("Pretty-print JSON output. Only valid when --json is used.")
-      .flag()
-      .bindTo(opts.prettyJson);
-
-    parser
       .addArguments("--format")
-      .help("Output system information in the specified format (e.g., 'markdown', 'json', 'yaml').")
+      .help("Output system information using an output format plugin (e.g., 'markdown', 'json', 'json-pretty', 'yaml').")
       .defaultValue(String(""))
       .bindTo(opts.outputFormat);
 
@@ -333,8 +319,6 @@ auto main(const i32 argc, CStr* argv[]) -> i32 try {
 #endif
     } else if (!opts.compactFormat.empty())
       PrintCompactOutput(opts.compactFormat, data);
-    else if (opts.jsonOutput)
-      PrintJsonOutput(data, opts.prettyJson);
     else
       Print(CreateUI(config, data, opts.noAscii));
   }
