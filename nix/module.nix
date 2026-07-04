@@ -503,7 +503,7 @@ in {
       }
       {
         assertion = cfg.pluginConfigs == {} || cfg.configFormat == "toml";
-        message = "pluginConfigs are written as TOML runtime config; use configFormat = \"toml\" or move typed precompiled plugin config into the plugin's own Nix module.";
+        message = "pluginConfigs are written as TOML runtime config. For configFormat = \"hpp\", use a configured plugin package that generates its own per-plugin config.hpp.";
       }
     ];
   };

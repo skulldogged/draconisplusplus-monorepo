@@ -131,8 +131,18 @@ With Nix/Home Manager, flake-packaged plugin collections can be passed as
 ```nix
 programs.draconisplusplus = {
   enable = true;
+  configFormat = "hpp";
   pluginPackages = [
-    inputs.draconisplusplus-plugins.packages.${pkgs.system}.all
+    (inputs.draconisplusplus-plugins.lib.${pkgs.system}.mkPluginRoot {
+      weather = {
+        provider = "openmeteo";
+        units = "imperial";
+        coords = {
+          lat = 40.7128;
+          lon = -74.0060;
+        };
+      };
+    })
   ];
   staticPlugins = ["weather" "json_format"];
   pluginAutoLoad = ["weather"];
