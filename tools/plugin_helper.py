@@ -320,10 +320,13 @@ def cmd_new(args: argparse.Namespace) -> None:
     (plugin_dir / "plugin.json").write_text(render(MANIFEST_TEMPLATE), encoding="utf-8")
     (plugin_dir / f"{name}.cpp").write_text(render(PLUGIN_TEMPLATE), encoding="utf-8")
 
+    plugin_root = plugin_dir.parent
+    plugin_dirs_arg = f" -Dplugin_dirs={plugin_root}" if plugin_root != Path("plugins") else ""
+
     print(f"Created plugin '{name}' in {plugin_dir}")
     print("Build it:")
-    print(f"  dynamic: meson setup build && meson compile -C build {name}")
-    print(f"  static:  meson setup build -Dstatic_plugins={name} && meson compile -C build")
+    print(f"  dynamic: meson setup build{plugin_dirs_arg} && meson compile -C build {name}")
+    print(f"  static:  meson setup build{plugin_dirs_arg} -Dstatic_plugins={name} && meson compile -C build")
 
 
 def main() -> None:

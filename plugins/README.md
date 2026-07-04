@@ -1,44 +1,46 @@
-# Draconis++ Plugins
+# Draconis++ Plugin Authoring
 
 A plugin is a **self-contained directory** with a `plugin.json` manifest and
-one or more C++ sources. The build system discovers plugins automatically —
-adding a plugin never requires editing any build files.
+one or more C++ sources. Official plugins are intentionally maintained outside
+this core repository so the extension model is the same for first-party and
+third-party plugins.
 
 Plugins are discovered from:
 
-1. This directory (`plugins/`) — every subdirectory containing a `plugin.json`
-2. Any extra directories passed at setup time via `-Dplugin_dirs=/path/to/my-plugins`
+1. Any external plugin roots passed at setup time via `-Dplugin_dirs=/path/to/plugins`
+2. This directory (`plugins/`) when it contains a local checkout or scratch plugin
 
-Both bundled and user-made plugins go through exactly the same machinery
-(`tools/plugin_helper.py`), and every plugin can be built **dynamically**
-(a shared library loaded at runtime) or **statically** (compiled into the
-binary) with no source changes.
+Official and user-made plugins go through exactly the same machinery
+(`tools/plugin_helper.py`), and every plugin can be built **dynamically** (a
+shared library loaded at runtime) or **statically** (compiled into the binary)
+with no source changes.
 
 ## Quick Start: Creating a Plugin
 
-Scaffold a new plugin (or use `just new-plugin my_stats`):
+Scaffold a new plugin in an external plugin repository:
 
 ```bash
-python3 tools/plugin_helper.py new my_stats
+python3 tools/plugin_helper.py new my_stats --dir ~/draconis-plugins
 ```
 
-This creates `plugins/my_stats/` with a working `plugin.json` and
+This creates `~/draconis-plugins/my_stats/` with a working `plugin.json` and
 `my_stats.cpp` implementing `IInfoProviderPlugin`. Then build it:
 
 ```bash
 # Dynamic plugin (default) - produces build/plugins/my_stats.so
-meson setup build && meson compile -C build
+meson setup build -Dplugin_dirs=$HOME/draconis-plugins && meson compile -C build
 
 # Static plugin - compiled into the draconis++ binary
-meson setup build -Dstatic_plugins=my_stats && meson compile -C build
+meson setup build -Dplugin_dirs=$HOME/draconis-plugins -Dstatic_plugins=my_stats && meson compile -C build
 ```
 
-To keep your plugin outside this repository, put the plugin directory
-anywhere and point the build at its **parent** directory:
+For quick local experiments inside this repository, `just new-plugin my_stats`
+still creates `plugins/my_stats/`; keep releasable plugins in their own
+repository and pass that repository's plugin root with `-Dplugin_dirs=`.
 
 ```bash
-python3 tools/plugin_helper.py new my_stats --dir ~/draconis-plugins
-meson setup build -Dplugin_dirs=$HOME/draconis-plugins -Dstatic_plugins=my_stats
+just new-plugin my_stats
+meson setup build -Dstatic_plugins=my_stats
 ```
 
 `-Dstatic_plugins=all` statically links every discovered plugin.

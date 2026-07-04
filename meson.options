@@ -16,7 +16,7 @@ option('build_tests', type: 'boolean', value: true, description: 'Build unit tes
 # Plugin options
 option('plugins', type: 'feature', value: 'auto', description: 'Enable plugin system')
 option('static_plugins', type: 'array', value: [], description: 'Plugins to compile into the binary (plugin names, or "all" for every discovered plugin)')
-option('plugin_dirs', type: 'array', value: [], description: 'Additional directories to search for plugins (each subdirectory with a plugin.json is a plugin)')
+option('plugin_dirs', type: 'array', value: [], description: 'External plugin roots to search (each subdirectory with a plugin.json is a plugin)')
 option('precompiled_config', type: 'boolean', value: false, description: 'Use precompiled configuration')
 
 # Platform-specific options

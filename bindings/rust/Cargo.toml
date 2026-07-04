@@ -15,7 +15,7 @@ categories = ["os", "hardware-support", "api-bindings"]
 # - DRAC_PACKAGECOUNT: Enable package counting (auto/enabled/disabled) - default: auto
 # - DRAC_BUILD_TYPE: Build type (debug/release/debugoptimized) - default: release
 #
-# Example: DRAC_STATIC_PLUGINS=now_playing,weather cargo build
+# Example: DRAC_PLUGIN_DIRS=../draconisplusplus-plugins DRAC_STATIC_PLUGINS=all cargo build
 
 [dependencies]
 thiserror = "1.0"

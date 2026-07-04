@@ -23,7 +23,7 @@ exe_path := if os() == "windows" { ".\\build\\core\\src\\CLI\\draconis++.exe" } 
 setup:
     meson setup {{build_dir}}
 
-# Reconfigure with custom options (e.g., just configure -Dweather=disabled)
+# Reconfigure with custom options (e.g., just configure -Dplugins=enabled)
 configure *ARGS:
     meson setup {{build_dir}} --reconfigure {{ARGS}}
 
@@ -91,7 +91,7 @@ rebuild: clean build
 #   Plugins             #
 # ===================== #
 
-# Scaffold a new plugin in plugins/ (e.g., just new-plugin my_stats)
+# Scaffold a new local plugin under plugins/ (e.g., just new-plugin my_stats)
 new-plugin NAME:
     python3 tools/plugin_helper.py new {{NAME}}
 

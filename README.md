@@ -21,6 +21,7 @@ Cross-platform system information library with multi-language bindings.
 │   ├── csharp/     # C# bindings
 │   ├── kotlin/     # Kotlin/JNI bindings
 │   └── c3/         # C3 bindings
+├── plugins/        # Plugin authoring docs and local extension build harness
 └── subprojects/    # Meson subprojects (dependencies)
 ```
 
@@ -39,10 +40,10 @@ meson setup build
 meson compile -C build
 ```
 
-### With Static Plugins
+### With External Static Plugins
 
 ```bash
-meson setup build -Dstatic_plugins=now_playing,weather   # or -Dstatic_plugins=all
+meson setup build -Dplugin_dirs=/path/to/draconisplusplus-plugins -Dstatic_plugins=all
 meson compile -C build
 ```
 
@@ -97,9 +98,11 @@ var mem = client.GetMemoryUsage();
 
 ## Plugin System
 
-Plugins are self-contained directories with a `plugin.json` manifest,
-discovered automatically by the build — adding a plugin never requires
-editing build files. Every plugin builds both ways without source changes:
+Plugins are self-contained directories with a `plugin.json` manifest. Official
+plugins are maintained outside this core repository and are supplied to the
+build with `-Dplugin_dirs=/path/to/plugin-root`. A local `plugins/` checkout is
+also discovered for extension development. Every plugin builds both ways
+without source changes:
 
 - **Static plugins**: Compiled into the binary (`-Dstatic_plugins=name1,name2` or `all`), registered and loaded automatically at startup
 - **Dynamic plugins**: Built as shared libraries (the default) and loaded at runtime from standard plugin directories
@@ -107,19 +110,33 @@ editing build files. Every plugin builds both ways without source changes:
 ### Creating a Plugin
 
 ```bash
-# Scaffold a working plugin in plugins/my_stats/ (or: just new-plugin my_stats)
-python3 tools/plugin_helper.py new my_stats
+# Scaffold a working plugin in an external plugin root
+python3 tools/plugin_helper.py new my_stats --dir ~/draconis-plugins
 
 # Build dynamically (default) or compile it into the binary
-meson setup build && meson compile -C build
-meson setup build -Dstatic_plugins=my_stats && meson compile -C build
+meson setup build -Dplugin_dirs=$HOME/draconis-plugins && meson compile -C build
+meson setup build -Dplugin_dirs=$HOME/draconis-plugins -Dstatic_plugins=my_stats && meson compile -C build
 ```
 
-User-made plugins can also live outside the repository — point the build at
-the directory containing them:
+Official and third-party plugins are discovered the same way:
 
 ```bash
 meson setup build -Dplugin_dirs=$HOME/draconis-plugins -Dstatic_plugins=all
+```
+
+With Nix/Home Manager, flake-packaged plugin collections can be passed as
+`pluginPackages`, while plain plugin source roots can still be passed as
+`pluginDirs`:
+
+```nix
+programs.draconisplusplus = {
+  enable = true;
+  pluginPackages = [
+    inputs.draconisplusplus-plugins.packages.${pkgs.system}.all
+  ];
+  staticPlugins = ["weather" "json_format"];
+  pluginAutoLoad = ["weather"];
+};
 ```
 
 A plugin is just a class implementing one of the plugin interfaces plus the
@@ -135,8 +152,8 @@ class MyPlugin : public draconis::core::plugin::IInfoProviderPlugin {
 DRAC_PLUGIN(MyPlugin)
 ```
 
-See [plugins/README.md](plugins/README.md) for the manifest schema and the
-full authoring guide.
+See [plugins/README.md](plugins/README.md) for the manifest schema and the full
+authoring guide.
 
 ## License
 

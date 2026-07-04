@@ -2,9 +2,9 @@
 #  Draconis++ Dynamic Plugin Builds  #
 # ================================== #
 
-# Builds every discovered plugin (bundled plugins/ subdirectories plus any
-# -Dplugin_dirs= directories) as a loadable module. Plugin metadata comes from
-# each plugin's plugin.json manifest - see plugins/README.md for the schema.
+# Builds every discovered plugin from -Dplugin_dirs= plus any local plugin
+# checkout under plugins/ as a loadable module. Official plugins live outside
+# the core repository; this file is the generic build harness for extensions.
 #
 # This directory is only entered for dynamic plugin builds; when static
 # plugins are requested via -Dstatic_plugins=, their sources are compiled

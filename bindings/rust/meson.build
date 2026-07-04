@@ -18,4 +18,4 @@ draconis_rust_dep = declare_dependency(
 #   cd bindings/rust && cargo build
 #
 # Or use environment variables to configure:
-#   DRAC_STATIC_PLUGINS=now_playing,weather cargo build --release
+#   DRAC_PLUGIN_DIRS=../draconisplusplus-plugins DRAC_STATIC_PLUGINS=all cargo build --release

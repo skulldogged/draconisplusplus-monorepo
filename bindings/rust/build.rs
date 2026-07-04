@@ -19,6 +19,7 @@ fn main() {
   let build_dir = monorepo_root.join("build-rust");
 
   println!("cargo:rerun-if-env-changed=DRAC_PLUGINS");
+  println!("cargo:rerun-if-env-changed=DRAC_PLUGIN_DIRS");
   println!("cargo:rerun-if-env-changed=DRAC_STATIC_PLUGINS");
   println!("cargo:rerun-if-env-changed=DRAC_PACKAGECOUNT");
   println!("cargo:rerun-if-env-changed=DRAC_CACHING");
@@ -36,6 +37,7 @@ fn run_meson_build(monorepo_root: &Path, build_dir: &Path) {
   let is_configured = build_dir.join("build.ninja").exists();
 
   let plugins = env::var("DRAC_PLUGINS").ok();
+  let plugin_dirs = env::var("DRAC_PLUGIN_DIRS").ok();
   let static_plugins = env::var("DRAC_STATIC_PLUGINS").ok();
   let packagecount = env::var("DRAC_PACKAGECOUNT").ok();
   let caching = env::var("DRAC_CACHING").ok();
@@ -43,6 +45,7 @@ fn run_meson_build(monorepo_root: &Path, build_dir: &Path) {
 
   let needs_reconfigure = !is_configured
     || plugins.is_some()
+    || plugin_dirs.is_some()
     || static_plugins.is_some()
     || packagecount.is_some()
     || caching.is_some()
@@ -79,6 +82,10 @@ fn run_meson_build(monorepo_root: &Path, build_dir: &Path) {
       args.push(format!("-Dpackagecount={}", val));
     }
 
+    if let Some(val) = &plugin_dirs {
+      args.push(format!("-Dplugin_dirs={}", val));
+    }
+
     if let Some(val) = &caching {
       args.push(format!("-Dcaching={}", val));
     }
@@ -104,6 +111,10 @@ fn run_meson_build(monorepo_root: &Path, build_dir: &Path) {
     if let Some(val) = &static_plugins {
       args.push(format!("-Dstatic_plugins={}", val));
       args.push("-Dprecompiled_config=false".to_string());
+    }
+
+    if let Some(val) = &plugin_dirs {
+      args.push(format!("-Dplugin_dirs={}", val));
     }
 
     if let Some(val) = &packagecount {

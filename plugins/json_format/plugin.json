@@ -1,7 +1,0 @@
-{
-  "name": "json_format",
-  "class": "JsonFormatPlugin",
-  "description": "Cross-platform output formatter for JSON output",
-  "platform": "all",
-  "deps": []
-}

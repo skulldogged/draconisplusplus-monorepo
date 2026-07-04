@@ -23,9 +23,10 @@ fs = import('fs')
 # ============================== #
 
 # Plugins are self-contained directories containing a plugin.json manifest.
-# They are discovered from the bundled plugins/ directory plus any directories
-# passed via -Dplugin_dirs=. tools/plugin_helper.py is the single source of
-# truth for manifest parsing; see plugins/README.md for the manifest schema.
+# The core repository does not vendor official plugin implementations; pass
+# external plugin roots via -Dplugin_dirs=. A local plugins/ checkout is also
+# honored for development convenience. tools/plugin_helper.py is the single
+# source of truth for manifest parsing; see plugins/README.md for the schema.
 python_prog = find_program('python3', 'python')
 plugin_helper = meson.project_source_root() / 'tools' / 'plugin_helper.py'
 
@@ -59,7 +60,7 @@ else
   foreach plugin_name : get_option('static_plugins')
     if plugin_name not in discovered_plugins
       error(
-        'Static plugin "@0@" was not found. Discovered plugins: @1@.\nAdd your plugin directory under plugins/, or pass its parent directory via -Dplugin_dirs=.'.format(
+        'Static plugin "@0@" was not found. Discovered plugins: @1@.\nPass the parent directory of the plugin checkout via -Dplugin_dirs=, or place a local checkout under plugins/.'.format(
           plugin_name,
           ', '.join(discovered_plugins.keys()),
         ),

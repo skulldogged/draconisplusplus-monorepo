@@ -171,56 +171,7 @@ with lib; let
     )
     cfg.layout;
 
-  # Helper to convert weather provider string to enum
-  weatherProviderToEnum = provider:
-    if provider == "metno" then "MetNo"
-    else if provider == "openweathermap" then "OpenWeatherMap"
-    else "OpenMeteo";
-
-  # Helper to convert units string to enum
-  weatherUnitsToEnum = units:
-    if units == "imperial" then "Imperial"
-    else "Metric";
-
-  # Get weather plugin config or empty
-  weatherPluginConfig = cfg.pluginConfigs.weather or {};
-  hasWeatherConfig = weatherPluginConfig != {};
-
-  # Generate location variant
-  weatherLocation = 
-    let
-      coords = weatherPluginConfig.coords or null;
-      city = weatherPluginConfig.location or null;
-    in
-      if city != null then
-        ''CityName { "${city}" }''
-      else if coords != null then
-        ''Coordinates { ${toString coords.lat}, ${toString coords.lon} }''
-      else
-        ''Coordinates { 0.0, 0.0 }'';
-
-  # Generate weather config include (OUTSIDE namespace to avoid collision)
-  weatherConfigInclude = ''#include "plugins/weather/WeatherConfig.hpp"'';
-
-  # Generate weather config variable (INSIDE namespace)
-  weatherConfigCode =
-    if hasWeatherConfig then ''
-      inline constexpr auto WEATHER_CONFIG = weather::config::MakeConfig(
-        weather::config::Provider::${weatherProviderToEnum (weatherPluginConfig.provider or "openmeteo")},
-        weather::config::Units::${weatherUnitsToEnum (weatherPluginConfig.units or "metric")},
-        weather::config::${weatherLocation}${lib.optionalString (weatherPluginConfig.api_key or "" != "") ",\n        \"${weatherPluginConfig.api_key}\""}
-      );
-    ''
-    else ''
-      // No weather plugin configured - using defaults
-      inline constexpr auto WEATHER_CONFIG = weather::config::MakeConfig(
-        weather::config::Provider::OpenMeteo,
-        weather::config::Units::Metric,
-        weather::config::Coordinates { 0.0, 0.0 }
-      );
-    '';
-  # Check if the weather plugin will be compiled in ("all" includes it)
-  hasWeatherPlugin = builtins.elem "weather" cfg.staticPlugins || builtins.elem "all" cfg.staticPlugins;
+  pluginRoots = cfg.pluginDirs ++ cfg.pluginPackages;
 
   configHpp =
     pkgs.writeText "config.hpp"
@@ -237,8 +188,6 @@ with lib; let
           #include <Drac++/Services/Packages.hpp>
         #endif
 
-        ${lib.optionalString hasWeatherPlugin weatherConfigInclude}
-
       namespace draconis::config {
         constexpr const char* DRAC_USERNAME = "${cfg.username}";
 
@@ -251,8 +200,6 @@ with lib; let
         ${layoutGroupsHppCode}
 
         ${layoutArrayHppCode}
-
-        ${lib.optionalString hasWeatherPlugin weatherConfigCode}
       }
 
       #endif
@@ -275,7 +222,7 @@ with lib; let
         "-Dpugixml=${if cfg.usePugixml then "enabled" else "disabled"}"
       ]
       ++ lib.optional (cfg.staticPlugins != []) "-Dstatic_plugins=${lib.concatStringsSep "," cfg.staticPlugins}"
-      ++ lib.optional (cfg.pluginDirs != []) "-Dplugin_dirs=${lib.concatStringsSep "," (map toString cfg.pluginDirs)}";
+      ++ lib.optional (pluginRoots != []) "-Dplugin_dirs=${lib.concatStringsSep "," (map toString pluginRoots)}";
   });
 
   draconisPkg = draconisWithOverrides;
@@ -386,8 +333,9 @@ in {
       default = [];
       description = ''
         Plugins to compile statically into the binary. Accepts any discovered
-        plugin name (bundled or from pluginDirs), or "all" for every
-        discovered plugin. Names are validated by the build.
+        plugin name from pluginDirs, pluginPackages, or a local plugins/
+        checkout, or "all" for every discovered plugin. Names are validated by
+        the build.
       '';
       example = literalExpression ''["weather" "now_playing"]'';
     };
@@ -396,11 +344,23 @@ in {
       type = types.listOf types.path;
       default = [];
       description = ''
-        Additional plugin directories passed to the build via -Dplugin_dirs=.
+        External plugin roots passed to the build via -Dplugin_dirs=.
         Each subdirectory containing a plugin.json is discovered as a plugin,
-        so user-made plugins build exactly like bundled ones.
+        so third-party plugins can be consumed without their own Nix flake.
       '';
       example = literalExpression ''[./my-draconis-plugins]'';
+    };
+
+    pluginPackages = mkOption {
+      type = types.listOf types.package;
+      default = [];
+      description = ''
+        Nix packages that expose a plugin root. Each package path is passed to
+        the build via -Dplugin_dirs=, so it should contain plugin directories as
+        direct children. This is intended for flake-packaged plugin collections
+        such as the official Draconis++ plugins.
+      '';
+      example = literalExpression ''[inputs.draconisplusplus-plugins.packages.''${pkgs.system}.all]'';
     };
 
     pluginAutoLoad = mkOption {
@@ -540,6 +500,10 @@ in {
       {
         assertion = !(cfg.staticPlugins != [] && !cfg.enablePlugins);
         message = "Plugins must be enabled to compile static plugins.";
+      }
+      {
+        assertion = cfg.pluginConfigs == {} || cfg.configFormat == "toml";
+        message = "pluginConfigs are written as TOML runtime config; use configFormat = \"toml\" or move typed precompiled plugin config into the plugin's own Nix module.";
       }
     ];
   };

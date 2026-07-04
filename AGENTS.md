@@ -8,7 +8,7 @@ Draconis++ is a cross-platform system information tool written in **C++26**. It 
 
 This monorepo contains:
 - `core/` - The main C++ library and CLI
-- `plugins/` - Plugin implementations (weather, now_playing, formats)
+- `plugins/` - Plugin authoring docs and local extension build harness
 - `bindings/` - Language bindings (Rust, Python, Lua, C#, Kotlin, C3)
 - `c-api/` - C API wrapper for all bindings
 
@@ -132,12 +132,7 @@ core/
       Config/, Core/, UI/
   tests/                # Unit tests (boost.ut)
 
-plugins/                # Plugin implementations
-  weather/
-  now_playing/
-  json_format/
-  markdown_format/
-  yaml_format/
+plugins/                # Plugin authoring docs and generic Meson build harness
 
 bindings/               # Language bindings (all use C API)
   rust/
@@ -155,13 +150,14 @@ c-api/                  # C API wrapper
 ## Plugin System
 
 Plugins are self-contained directories with a `plugin.json` manifest,
-auto-discovered from `plugins/` plus any `-Dplugin_dirs=` directories.
+auto-discovered from external `-Dplugin_dirs=` directories plus any local
+checkout under `plugins/`.
 `tools/plugin_helper.py` handles discovery, manifest parsing, static
 registration codegen, and scaffolding (`python3 tools/plugin_helper.py new <name>`).
 
 ```bash
-meson setup build -Dstatic_plugins=now_playing,weather  # compile into binary ('all' = every plugin)
-meson setup build                                       # dynamic plugins built as shared modules
+meson setup build -Dplugin_dirs=../draconisplusplus-plugins -Dstatic_plugins=all
+meson setup build -Dplugin_dirs=../draconisplusplus-plugins  # dynamic plugins built as shared modules
 ```
 
 See `plugins/README.md` for the manifest schema and authoring guide.
