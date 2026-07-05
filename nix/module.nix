@@ -172,6 +172,9 @@ with lib; let
     cfg.layout;
 
   pluginRoots = cfg.pluginDirs ++ cfg.pluginPackages;
+  pluginPackageBuildInputs =
+    lib.unique
+    (lib.concatMap (pluginPackage: pluginPackage.passthru.pluginBuildInputs or []) cfg.pluginPackages);
 
   configHpp =
     pkgs.writeText "config.hpp"
@@ -211,6 +214,8 @@ with lib; let
       + lib.optionalString (cfg.configFormat == "hpp") ''
         cp ${configHpp} ./config.hpp
       '';
+
+    buildInputs = (oldAttrs.buildInputs or []) ++ pluginPackageBuildInputs;
 
     mesonFlags =
       (oldAttrs.mesonFlags or [])
@@ -358,7 +363,9 @@ in {
         Nix packages that expose a plugin root. Each package path is passed to
         the build via -Dplugin_dirs=, so it should contain plugin directories as
         direct children. This is intended for flake-packaged plugin collections
-        such as the official Draconis++ plugins.
+        such as the official Draconis++ plugins. Packages may expose
+        passthru.pluginBuildInputs; those inputs are added to the Draconis++
+        build environment so plugin manifest dependencies can resolve.
       '';
       example = literalExpression ''[inputs.draconisplusplus-plugins.packages.''${pkgs.system}.all]'';
     };
