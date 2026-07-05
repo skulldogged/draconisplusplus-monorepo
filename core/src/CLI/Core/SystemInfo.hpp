@@ -57,6 +57,7 @@ namespace draconis::core::system {
       types::String                icon;
       types::String                label;
       types::Option<types::String> value = std::nullopt;
+      types::Option<types::String> error = std::nullopt;
     };
 
     // Display data provided by plugins (icon/label/value)

@@ -229,14 +229,14 @@ namespace draconis::cli {
     const auto& pluginDisplay = data.pluginDisplay;
 
     if (!pluginDisplay.empty()) {
-      Vec<String> pluginFailures;
+      Vec<Pair<String, Option<String>>> pluginFailures;
       Vec<String> pluginSuccesses;
 
       for (const auto& [pluginId, displayInfo] : pluginDisplay) {
         if (displayInfo.value.has_value())
           pluginSuccesses.push_back(displayInfo.label);
         else
-          pluginFailures.push_back(displayInfo.label);
+          pluginFailures.push_back({ displayInfo.label, displayInfo.error });
       }
 
       Println();
@@ -252,8 +252,11 @@ namespace draconis::cli {
           pluginFailures.size()
         );
 
-        for (const auto& label : pluginFailures)
-          Println(R"(  ✗ Plugin "{}" failed to provide data)", label);
+        for (const auto& [label, error] : pluginFailures)
+          if (error)
+            Println(R"(  ✗ Plugin "{}" failed: {})", label, *error);
+          else
+            Println(R"(  ✗ Plugin "{}" failed to provide data)", label);
       }
 
       if (!pluginSuccesses.empty()) {

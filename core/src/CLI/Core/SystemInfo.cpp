@@ -272,14 +272,22 @@ namespace draconis::core::system {
 
           if (auto displayValue = plugin->getDisplayValue(); displayValue)
             displayInfo.value = *displayValue;
+          else
+            displayInfo.error = displayValue.error().message;
         } else {
           debug_log("Plugin '{}' failed to collect data: {}", metadata.name, result.error().message);
+          displayInfo.error = result.error().message;
         }
       } catch (const std::exception& e) {
         debug_log("Exception in plugin '{}': {}", metadata.name, e.what());
+        displayInfo.error = e.what();
       } catch (...) {
         debug_log("Unknown exception in plugin '{}'", metadata.name);
+        displayInfo.error = "Unknown plugin exception";
       }
+
+      if (auto lastError = plugin->getLastError())
+        displayInfo.error = *lastError;
 
       pluginDisplay[pluginId] = std::move(displayInfo);
     }
