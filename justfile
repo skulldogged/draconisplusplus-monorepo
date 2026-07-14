@@ -88,20 +88,12 @@ clean:
 rebuild: clean build
 
 # ===================== #
-#   Plugins             #
-# ===================== #
-
-# Scaffold a new local plugin under plugins/ (e.g., just new-plugin my_stats)
-new-plugin NAME:
-    python3 tools/plugin_helper.py new {{NAME}}
-
-# ===================== #
 #   Development         #
 # ===================== #
 
 # Format all source files
 format:
-    clang-format -i core/src core/include plugins c-api/src c-api/include bindings/lua/src bindings/python/src
+    clang-format -i core/src core/include c-api/src c-api/include bindings/lua/src bindings/python/src
 
 # Run static analysis
 lint:

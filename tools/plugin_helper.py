@@ -13,7 +13,7 @@ Subcommands:
                                    plugin, filtered for the given host platform.
   registry [<class>...]            Generate the StaticPluginInit.cpp translation
                                    unit that registers the given plugin classes.
-  new <name> [--dir DIR]           Scaffold a new plugin directory.
+  new <name> --dir DIR             Scaffold a new plugin directory.
 
 plugin.json schema:
   {
@@ -199,6 +199,7 @@ PLUGIN_TEMPLATE = """/**
 namespace {
   using namespace draconis::utils::types;
   using draconis::core::plugin::PluginContext;
+  using draconis::core::plugin::PluginFields;
   using draconis::core::plugin::PluginMetadata;
   using draconis::core::plugin::PluginType;
 
@@ -317,7 +318,7 @@ def cmd_new(args: argparse.Namespace) -> None:
     (plugin_dir / f"{name}.cpp").write_text(render(PLUGIN_TEMPLATE), encoding="utf-8")
 
     plugin_root = plugin_dir.parent
-    plugin_dirs_arg = f" -Dplugin_dirs={plugin_root}" if plugin_root != Path("plugins") else ""
+    plugin_dirs_arg = f" -Dplugin_dirs={plugin_root}"
 
     print(f"Created plugin '{name}' in {plugin_dir}")
     print("Build it:")
@@ -330,7 +331,7 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     p_discover = subparsers.add_parser("discover", help="list plugins found in the given directories")
-    p_discover.add_argument("dirs", nargs="+")
+    p_discover.add_argument("dirs", nargs="*")
     p_discover.set_defaults(func=cmd_discover)
 
     p_info = subparsers.add_parser("info", help="print build info for a plugin directory")
@@ -344,7 +345,7 @@ def main() -> None:
 
     p_new = subparsers.add_parser("new", help="scaffold a new plugin")
     p_new.add_argument("name")
-    p_new.add_argument("--dir", default="plugins")
+    p_new.add_argument("--dir", required=True, help="external root in which to create the plugin")
     p_new.set_defaults(func=cmd_new)
 
     args = parser.parse_args()
