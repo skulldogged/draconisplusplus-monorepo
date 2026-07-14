@@ -181,7 +181,7 @@ namespace draconis::config {
   //==============================================================================
   // Weather Plugin Config - only needed if using -Dstatic_plugins=weather
   //==============================================================================
-  #include "plugins/weather/WeatherConfig.hpp"
+  #include "weather/WeatherConfig.hpp"
 
   /**
    * @brief Weather Plugin Configuration

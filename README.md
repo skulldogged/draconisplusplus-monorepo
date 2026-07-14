@@ -1,170 +1,143 @@
-# Draconis++ Monorepo
+# Draconis++
 
-Cross-platform system information library with multi-language bindings.
+Draconis++ is a fast, cross-platform system information tool and library written
+in C++26. It provides a configurable command-line interface, reusable C++ and C
+APIs, language bindings, and an external plugin system.
 
-## Features
+## Highlights
 
-- **Cross-platform**: Windows, macOS, Linux, FreeBSD, OpenBSD, NetBSD, Haiku, SerenityOS
-- **Multi-language bindings**: C, C++, Rust, Python, Lua, C#, Kotlin, C3
-- **Plugin system**: Static and dynamic plugin support
-- **Zero-cost abstractions**: Efficient caching, minimal allocations
+- Collects operating system, kernel, host, CPU, GPU, memory, disk, uptime,
+  desktop, window manager, shell, and package information
+- Runs on Windows, macOS, Linux, FreeBSD, OpenBSD, NetBSD, Haiku, and
+  SerenityOS
+- Supports compact templates, localized output, custom terminal logos, caching,
+  diagnostics, and shell completion generation
+- Exposes C++, C, Rust, Python, Lua, C#, Kotlin, and C3 interfaces
+- Loads third-party data providers and output formats as dynamic modules or
+  compiles them into the binary
 
-## Project Structure
+## Build from source
 
-```
-├── core/           # Core C++ library
-├── c-api/          # C API wrapper
-├── bindings/       # Language bindings
-│   ├── rust/       # Rust bindings
-│   ├── python/     # Python bindings (nanobind)
-│   ├── lua/        # Lua bindings (sol2)
-│   ├── csharp/     # C# bindings
-│   ├── kotlin/     # Kotlin/JNI bindings
-│   └── c3/         # C3 bindings
-├── plugins/        # Plugin authoring docs and local extension build harness
-└── subprojects/    # Meson subprojects (dependencies)
-```
+You will need:
 
-## Building
-
-### Prerequisites
-
-- Meson 1.1+
+- Meson 1.1 or newer
 - Ninja
-- C++26 compiler (MSVC 2022, Clang 18+, GCC 14+)
+- Python 3
+- A compiler and standard library with the C++26 features used by the project
 
-### Setup
+The recommended workflow uses [`just`](https://github.com/casey/just):
+
+```bash
+just setup
+just build
+just run
+```
+
+The equivalent Meson commands are:
 
 ```bash
 meson setup build
 meson compile -C build
+./build/core/src/CLI/draconis++
 ```
 
-### With External Static Plugins
+On Windows, the executable is
+`build\core\src\CLI\draconis++.exe`.
+
+Useful development commands:
 
 ```bash
-meson setup build -Dplugin_dirs=/path/to/draconisplusplus-plugins -Dstatic_plugins=all
+just test                  # run the test suite
+just test-one "Types"      # run one Meson test
+just format                # format C and C++ sources
+just lint                  # run clang-tidy against the configured build
+```
+
+Meson builds the CLI, C++ library, C API, and tests by default. Optional targets
+can be enabled at setup time:
+
+```bash
+meson setup build \
+  -Dbuild_examples=true \
+  -Dbuild_python=true \
+  -Dbuild_rust=true
+```
+
+Run `meson configure build` to see every available option. Reconfigure an
+existing build with `just configure -Doption=value` or
+`meson setup build --reconfigure -Doption=value`.
+
+## Using the CLI
+
+Run `draconis++ --help` for the complete command reference. A few useful modes
+are:
+
+```bash
+draconis++ --doctor
+draconis++ --benchmark
+draconis++ --compact '{host} | {cpu} | {ram}'
+draconis++ --generate-completions zsh
+draconis++ --show-config-path
+```
+
+On its first run, Draconis++ creates a TOML configuration file in the normal
+per-user configuration directory. `--show-config-path` prints the location in
+use. Builds intended for immutable or declarative systems can instead enable
+`-Dprecompiled_config=true` and provide a `config.hpp` based on
+[`config.example.hpp`](config.example.hpp).
+
+## Plugins
+
+Plugins live outside this repository. A plugin is a self-contained directory
+with a `plugin.json` manifest and one or more C++ source files. Pass the parent
+directory containing plugin checkouts through `-Dplugin_dirs`:
+
+```bash
+# Create ~/draconis-plugins/my_stats
+python3 tools/plugin_helper.py new my_stats --dir "$HOME/draconis-plugins"
+
+# Build all discovered plugins as runtime-loadable modules
+meson setup build -Dplugin_dirs="$HOME/draconis-plugins"
 meson compile -C build
+
+# Or compile selected plugins into Draconis++
+meson setup build-static \
+  -Dplugin_dirs="$HOME/draconis-plugins" \
+  -Dstatic_plugins=my_stats
+meson compile -C build-static
 ```
 
-## Language Bindings
+Use `-Dstatic_plugins=all` to compile every discovered plugin statically.
+Dynamic modules are installed under `<libdir>/draconis++/plugins` and can also
+be found at runtime through `DRAC_PLUGIN_PATH`.
 
-### Rust
+See the [plugin authoring guide](docs/plugins.md) for the manifest schema,
+plugin interfaces, runtime search paths, configuration, and build behavior.
 
-```toml
-[dependencies]
-draconis = { path = "bindings/rust" }
-```
+## Language bindings
 
-```rust
-use draconis::{CacheManager, Plugin, init_static_plugins};
+All non-C++ bindings use the stable C API in
+[`c-api/include/draconis_c.h`](c-api/include/draconis_c.h). Enable the binding
+you need with its Meson option:
 
-let mut cache = CacheManager::new();
-let count = init_static_plugins();
-let mut plugin = Plugin::new("NowPlayingPlugin")?;
-plugin.initialize(&mut cache)?;
-plugin.collect_data(&mut cache)?;
-let fields = plugin.get_fields()?;
-```
+| Binding | Meson option |
+| --- | --- |
+| Rust | `-Dbuild_rust=true` |
+| Python | `-Dbuild_python=true` |
+| Lua | `-Dbuild_lua=true` |
+| C# | `-Dbuild_csharp=true` |
+| Kotlin | `-Dbuild_kotlin=true` |
+| C3 | `-Dbuild_c3=true` |
 
-### Python
+The C++ headers and C API header are installed by `meson install -C build`.
 
-```python
-import draconis
+## Nix and Home Manager
 
-sys = draconis.SystemInfo()
-print(f"Uptime: {sys.get_uptime()}s")
-print(f"Memory: {sys.get_mem_info()}")
-```
-
-### Lua
-
-```lua
-local draconis = require("draconis")
-
-local sys = draconis.SystemInfo()
-print("Uptime:", sys:get_uptime())
-```
-
-### C#
-
-```csharp
-using Draconis;
-
-using var client = new DraconisClient();
-var uptime = client.GetUptimeSeconds();
-var mem = client.GetMemoryUsage();
-```
-
-## Plugin System
-
-Plugins are self-contained directories with a `plugin.json` manifest. Official
-plugins are maintained outside this core repository and are supplied to the
-build with `-Dplugin_dirs=/path/to/plugin-root`. A local `plugins/` checkout is
-also discovered for extension development. Every plugin builds both ways
-without source changes:
-
-- **Static plugins**: Compiled into the binary (`-Dstatic_plugins=name1,name2` or `all`), registered and loaded automatically at startup
-- **Dynamic plugins**: Built as shared libraries (the default) and loaded at runtime from standard plugin directories
-
-### Creating a Plugin
-
-```bash
-# Scaffold a working plugin in an external plugin root
-python3 tools/plugin_helper.py new my_stats --dir ~/draconis-plugins
-
-# Build dynamically (default) or compile it into the binary
-meson setup build -Dplugin_dirs=$HOME/draconis-plugins && meson compile -C build
-meson setup build -Dplugin_dirs=$HOME/draconis-plugins -Dstatic_plugins=my_stats && meson compile -C build
-```
-
-Official and third-party plugins are discovered the same way:
-
-```bash
-meson setup build -Dplugin_dirs=$HOME/draconis-plugins -Dstatic_plugins=all
-```
-
-With Nix/Home Manager, flake-packaged plugin collections can be passed as
-`pluginPackages`, while plain plugin source roots can still be passed as
-`pluginDirs`:
-
-```nix
-programs.draconisplusplus = {
-  enable = true;
-  configFormat = "hpp";
-  pluginPackages = [
-    (inputs.draconisplusplus-plugins.lib.${pkgs.system}.mkPluginRoot {
-      weather = {
-        provider = "openmeteo";
-        units = "imperial";
-        coords = {
-          lat = 40.7128;
-          lon = -74.0060;
-        };
-      };
-    })
-  ];
-  staticPlugins = ["weather" "json_format"];
-  pluginAutoLoad = ["weather"];
-};
-```
-
-A plugin is just a class implementing one of the plugin interfaces plus the
-`DRAC_PLUGIN()` registration macro:
-
-```cpp
-#include <Drac++/Core/Plugin.hpp>
-
-class MyPlugin : public draconis::core::plugin::IInfoProviderPlugin {
-  // ... implement interface
-};
-
-DRAC_PLUGIN(MyPlugin)
-```
-
-See [plugins/README.md](plugins/README.md) for the manifest schema and the full
-authoring guide.
+The repository includes a Nix package and Home Manager module. Plugin source
+roots can be supplied with `pluginDirs`; packaged plugin collections can be
+supplied with `pluginPackages`. The module also supports static plugin selection
+and runtime auto-loading through `staticPlugins` and `pluginAutoLoad`.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE)
+Draconis++ is available under the [MIT License](LICENSE).

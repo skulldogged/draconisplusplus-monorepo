@@ -8,7 +8,7 @@ Draconis++ is a cross-platform system information tool written in **C++26**. It 
 
 This monorepo contains:
 - `core/` - The main C++ library and CLI
-- `plugins/` - Plugin authoring docs and local extension build harness
+- `docs/` - Contributor and plugin authoring documentation
 - `bindings/` - Language bindings (Rust, Python, Lua, C#, Kotlin, C3)
 - `c-api/` - C API wrapper for all bindings
 
@@ -132,7 +132,7 @@ core/
       Config/, Core/, UI/
   tests/                # Unit tests (boost.ut)
 
-plugins/                # Plugin authoring docs and generic Meson build harness
+docs/                   # Contributor and plugin authoring documentation
 
 bindings/               # Language bindings (all use C API)
   rust/
@@ -150,17 +150,17 @@ c-api/                  # C API wrapper
 ## Plugin System
 
 Plugins are self-contained directories with a `plugin.json` manifest,
-auto-discovered from external `-Dplugin_dirs=` directories plus any local
-checkout under `plugins/`.
+discovered from external directories passed through `-Dplugin_dirs=`.
 `tools/plugin_helper.py` handles discovery, manifest parsing, static
-registration codegen, and scaffolding (`python3 tools/plugin_helper.py new <name>`).
+registration codegen, and scaffolding
+(`python3 tools/plugin_helper.py new <name> --dir <plugin-root>`).
 
 ```bash
 meson setup build -Dplugin_dirs=../draconisplusplus-plugins -Dstatic_plugins=all
 meson setup build -Dplugin_dirs=../draconisplusplus-plugins  # dynamic plugins built as shared modules
 ```
 
-See `plugins/README.md` for the manifest schema and authoring guide.
+See `docs/plugins.md` for the manifest schema and authoring guide.
 
 All bindings use the C API (`c-api/include/draconis_c.h`), not the C++ API directly.
 

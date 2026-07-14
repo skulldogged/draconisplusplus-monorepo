@@ -157,14 +157,9 @@ third_party_includes = include_directories('third_party', is_system: true)
 
 fs = import('fs')
 
-# Make plugin headers visible to core (e.g. precompiled config including
-# plugin config headers). Covers external plugin roots passed via
-# -Dplugin_dirs= plus an optional local plugins/ checkout for development.
+# Make headers from external plugin roots visible to core. This supports, for
+# example, a precompiled configuration that includes plugin config headers.
 plugins_includes = []
-
-if fs.is_dir(meson.project_source_root() / 'plugins')
-  plugins_includes += include_directories('../plugins', is_system: true)
-endif
 
 foreach extra_dir : get_option('plugin_dirs')
   if not fs.is_absolute(extra_dir)

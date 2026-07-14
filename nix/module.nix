@@ -338,9 +338,8 @@ in {
       default = [];
       description = ''
         Plugins to compile statically into the binary. Accepts any discovered
-        plugin name from pluginDirs, pluginPackages, or a local plugins/
-        checkout, or "all" for every discovered plugin. Names are validated by
-        the build.
+        plugin name from pluginDirs or pluginPackages, or "all" for every
+        discovered plugin. Names are validated by the build.
       '';
       example = literalExpression ''["weather" "now_playing"]'';
     };

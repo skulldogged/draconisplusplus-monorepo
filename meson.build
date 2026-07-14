@@ -23,14 +23,13 @@ fs = import('fs')
 # ============================== #
 
 # Plugins are self-contained directories containing a plugin.json manifest.
-# The core repository does not vendor official plugin implementations; pass
-# external plugin roots via -Dplugin_dirs=. A local plugins/ checkout is also
-# honored for development convenience. tools/plugin_helper.py is the single
-# source of truth for manifest parsing; see plugins/README.md for the schema.
+# The core repository does not vendor plugin implementations; pass external
+# plugin roots via -Dplugin_dirs=. tools/plugin_helper.py is the single source
+# of truth for manifest parsing; see docs/plugins.md for the schema.
 python_prog = find_program('python3', 'python')
 plugin_helper = meson.project_source_root() / 'tools' / 'plugin_helper.py'
 
-plugin_search_dirs = [meson.project_source_root() / 'plugins']
+plugin_search_dirs = []
 foreach extra_dir : get_option('plugin_dirs')
   if fs.is_absolute(extra_dir)
     plugin_search_dirs += extra_dir
@@ -60,7 +59,7 @@ else
   foreach plugin_name : get_option('static_plugins')
     if plugin_name not in discovered_plugins
       error(
-        'Static plugin "@0@" was not found. Discovered plugins: @1@.\nPass the parent directory of the plugin checkout via -Dplugin_dirs=, or place a local checkout under plugins/.'.format(
+        'Static plugin "@0@" was not found. Discovered plugins: @1@.\nPass the parent directory of the plugin checkout via -Dplugin_dirs=.'.format(
           plugin_name,
           ', '.join(discovered_plugins.keys()),
         ),
@@ -84,9 +83,77 @@ subdir('core')
 # C API (stable ABI layer, always built)
 subdir('c-api')
 
-# Dynamic plugin builds (static plugins are compiled into core instead)
+# Dynamic plugin builds (static plugins are compiled into core instead).
 if get_option('plugins').allowed() and static_plugin_list.length() == 0
-  subdir('plugins')
+  plugin_cpp_args = ['-DDRAC_PLUGIN_BUILD=1']
+
+  if cpp.get_id() not in ['msvc', 'clang-cl']
+    plugin_cpp_args += '-fvisibility=default'
+  endif
+
+  if host_system == 'windows'
+    plugin_name_suffix = 'dll'
+    plugin_cpp_args += '-DDRAC_PLUGIN_WINDOWS=1'
+  elif host_system == 'darwin'
+    plugin_name_suffix = 'dylib'
+    plugin_cpp_args += '-DDRAC_PLUGIN_MACOS=1'
+  else
+    plugin_name_suffix = 'so'
+    plugin_cpp_args += '-DDRAC_PLUGIN_UNIX=1'
+  endif
+
+  plugin_install_dir = get_option('libdir') / 'draconis++' / 'plugins'
+
+  foreach plugin_name, plugin_dir : discovered_plugins
+    plugin_info = run_command(
+      python_prog, plugin_helper, 'info', plugin_dir, '--platform', host_system,
+      check: true,
+    )
+
+    plugin_supported = true
+    plugin_sources = []
+    plugin_deps = []
+    plugin_missing_dep = ''
+
+    foreach line : plugin_info.stdout().strip().split('\n')
+      parts = line.split('|')
+      if parts[0] == 'SUPPORTED' and parts[1] == 'no'
+        plugin_supported = false
+      elif parts[0] == 'SRC'
+        plugin_sources += files(parts[1])
+      elif parts[0] == 'DEP'
+        plugin_dep = dependency(
+          parts[1],
+          include_type: parts[2],
+          static: parts[3] == 'true',
+          required: false,
+        )
+        if plugin_dep.found()
+          plugin_deps += plugin_dep
+        else
+          plugin_missing_dep = parts[1]
+        endif
+      endif
+    endforeach
+
+    if not plugin_supported
+      message('Skipping plugin "@0@": not supported on @1@'.format(plugin_name, host_system))
+    elif plugin_missing_dep != ''
+      warning('Skipping plugin "@0@": missing dependency "@1@"'.format(plugin_name, plugin_missing_dep))
+    else
+      shared_module(
+        plugin_name,
+        plugin_sources,
+        dependencies: [draconis_dep, glaze_dep] + plugin_deps,
+        cpp_args: plugin_cpp_args,
+        objcpp_args: plugin_cpp_args,
+        name_prefix: '',
+        name_suffix: plugin_name_suffix,
+        install: true,
+        install_dir: plugin_install_dir,
+      )
+    endif
+  endforeach
 endif
 
 # ============================== #
