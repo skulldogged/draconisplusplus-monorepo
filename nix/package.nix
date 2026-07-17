@@ -33,7 +33,6 @@
     ]
     ++ (with pkgs.pkgsStatic; [
       curl
-      mimalloc
       (magic-enum.overrideAttrs (old: {
         doCheck = false;
         cmakeFlags = (old.cmakeFlags or []) ++ ["-DMAGIC_ENUM_OPT_BUILD_TESTS=OFF"];
@@ -111,6 +110,7 @@
 
       mesonFlags = [
         "-Dbuild_examples=false"
+        "-Db_lto=true"
         (lib.optionalString stdenv.isLinux "-Duse_linked_pci_ids=true")
       ];
 

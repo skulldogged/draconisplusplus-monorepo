@@ -42,9 +42,6 @@
   // COM smart pointer support
   #include <wrl/client.h> // Microsoft::WRL::ComPtr
 
-  // Property store for NPSM media info
-  #include <propsys.h> // IPropertyStore, PROPERTYKEY, PROPVARIANT
-
   #include "Drac++/Core/System.hpp"
 
   #if DRAC_ENABLE_PACKAGECOUNT
@@ -162,8 +159,7 @@ namespace {
         // Only increment if the found item is:
         // 1. a directory
         // 2. not a special directory (".", "..")
-        if ((findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) &&
-            (wcscmp(findData.cFileName, L".") != 0 && wcscmp(findData.cFileName, L"..") != 0))
+        if ((findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && (wcscmp(findData.cFileName, L".") != 0 && wcscmp(findData.cFileName, L"..") != 0))
           count++;
 
         // Continue searching for more files and directories.
@@ -189,15 +185,10 @@ namespace {
       DWORD type = 0;
 
       // Query the registry value.
-      if (const LSTATUS status = RegQueryValueExW(
-            hKey,
-            valueName.c_str(),
-            nullptr,
-            &type,
-            // NOLINTNEXTLINE(*-pro-type-reinterpret-cast) - reinterpret_cast is required to convert the buffer to a byte array.
-            reinterpret_cast<LPBYTE>(registryBuffer.data()),
-            &dataSizeInBytes
-          );
+      if (const LSTATUS status = RegQueryValueExW(hKey, valueName.c_str(), nullptr, &type,
+                                                  // NOLINTNEXTLINE(*-pro-type-reinterpret-cast) - reinterpret_cast is required to convert the buffer to a byte array.
+                                                  reinterpret_cast<LPBYTE>(registryBuffer.data()),
+                                                  &dataSizeInBytes);
           FAILED(status)) {
         if (status == ERROR_FILE_NOT_FOUND)
           ERR(NotFound, "Registry value not found");
@@ -353,13 +344,15 @@ namespace {
         };
 
         // Considering this file is windows-specific, it's fine to use windows-specific extensions.
-  #if defined(__clang__)
+  #if defined(_MSC_VER) && defined(__clang__)
     #pragma clang diagnostic push
     #pragma clang diagnostic ignored "-Wlanguage-extension-token"
   #endif
         // Use Structured Exception Handling (SEH) to safely read the version data. In case of invalid
         // pointers, this will catch the access violation and return an Error, instead of crashing.
+  #if defined(_MSC_VER)
         __try {
+  #endif
           // Read the version data directly from the calculated memory addresses.
           // - reinterpret_cast is required to cast the memory addresses to volatile pointers.
           // - `volatile` tells the compiler that these memory reads should not be optimized away.
@@ -369,11 +362,13 @@ namespace {
           result.buildNumber  = *reinterpret_cast<const volatile u32*>(kuserSharedNtBuildNumber);
           // NOLINTEND(*-pro-type-reinterpret-cast, *-no-int-to-ptr)
           result.success = true;
+  #if defined(_MSC_VER)
         } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
           // If an access violation occurs, then the shared memory couldn't be properly read.
           result.success = false;
         }
-  #if defined(__clang__)
+  #endif
+  #if defined(_MSC_VER) && defined(__clang__)
     #pragma clang diagnostic pop
   #endif
 
@@ -1058,23 +1053,6 @@ namespace draconis::core::system {
 
   auto GetGPUModel(CacheManager& cache) -> Result<String> {
     return cache.getOrSet<String>("windows_gpu_model", draconis::utils::cache::CachePolicy::neverExpire(), []() -> Result<String> {
-      struct ComInitializer {
-        ComInitializer() {
-          CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        }
-
-        ~ComInitializer() {
-          CoUninitialize();
-        }
-
-        ComInitializer(ComInitializer&&)                         = delete;
-        ComInitializer(const ComInitializer&)                    = delete;
-        auto operator=(ComInitializer&&) -> ComInitializer&      = delete;
-        auto operator=(const ComInitializer&) -> ComInitializer& = delete;
-      };
-
-      static thread_local ComInitializer ComInit;
-
       Microsoft::WRL::ComPtr<IDXGIFactory> factory;
 
   #pragma clang diagnostic push

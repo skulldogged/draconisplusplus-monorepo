@@ -608,14 +608,14 @@ namespace draconis::ui {
 
       render.width    = shiftWidthCells;
       render.height   = logoHeightCells > 0
-          ? logoHeightCells
-          : (
+        ? logoHeightCells
+        : (
             sendHeightCells > 0
-                ? sendHeightCells
-                : (
+              ? sendHeightCells
+              : (
                   renderHeightPx > 0
-                      ? std::max<usize>(1, renderHeightPx / 10)
-                      : 0
+                    ? std::max<usize>(1, renderHeightPx / 10)
+                    : 0
                 )
           );
       render.isInline = true;
@@ -789,36 +789,37 @@ namespace draconis::ui {
         return lines;
       }
 
-      // First, split into words with their widths
-      Vec<String>       words;
-      Vec<usize>        wordWidths;
-      std::stringstream textStream((String(text)));
-      String            word;
-      while (textStream >> word) {
-        wordWidths.push_back(GetVisualWidth(word));
-        words.push_back(std::move(word));
+      // Split into non-owning words so wrapping does not allocate per token.
+      Vec<StringView> words;
+      Vec<usize>      wordWidths;
+      for (usize pos = 0; pos < text.size();) {
+        while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos])) != 0)
+          ++pos;
+
+        const usize wordStart = pos;
+        while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos])) == 0)
+          ++pos;
+
+        if (pos > wordStart) {
+          const StringView word = text.substr(wordStart, pos - wordStart);
+          words.push_back(word);
+          wordWidths.push_back(GetVisualWidth(word));
+        }
       }
 
       if (words.empty())
         return lines;
 
-      // Calculate prefix sums for efficient width calculation
-      // prefixWidth[i] = total width of words 0..i-1 including spaces between them
+      // Prefix sums make every candidate line-width query constant-time.
       Vec<usize> prefixWidth(words.size() + 1, 0);
       for (usize idx = 0; idx < words.size(); ++idx)
-        prefixWidth[idx + 1] = prefixWidth[idx] + wordWidths[idx] + (idx > 0 ? 1 : 0);
+        prefixWidth[idx + 1] = prefixWidth[idx] + wordWidths[idx];
 
       // Helper to get width of words[start..end) with spaces
       auto getLineWidth = [&](usize start, usize end) -> usize {
         if (start >= end)
           return 0;
-        // Width is: sum of word widths + (end-start-1) spaces
-        usize width = 0;
-        for (usize idx = start; idx < end; ++idx)
-          width += wordWidths[idx];
-        if (end > start)
-          width += end - start - 1; // spaces between words
-        return width;
+        return prefixWidth[end] - prefixWidth[start] + end - start - 1;
       };
 
       // Do greedy wrap first to determine minimum number of lines needed
@@ -996,23 +997,24 @@ namespace draconis::ui {
         String coloredLabel = Stylize(row.label, { .color = DEFAULT_THEME.label });
         String coloredValue = Stylize(row.value, { .color = row.color });
 
-        // Debug: check if colored strings have different visual widths
-        usize coloredIconW  = GetVisualWidth(coloredIcon);
-        usize coloredLabelW = GetVisualWidth(coloredLabel);
-        usize coloredValueW = GetVisualWidth(coloredValue);
-        if (coloredIconW != iconW || coloredLabelW != labelWidth || coloredValueW != valueW)
-          debug_log(
-            "Width mismatch! Icon: {} vs {}, Label: {} vs {}, Value: {} vs {}",
-            // clang-format off
-            iconW,      coloredIconW,
-            labelWidth, coloredLabelW,
-            valueW,     coloredValueW
-            // clang-format on
-          );
+        if (LogLevel::Debug >= GetRuntimeLogLevel()) {
+          const usize coloredIconW  = GetVisualWidth(coloredIcon);
+          const usize coloredLabelW = GetVisualWidth(coloredLabel);
+          const usize coloredValueW = GetVisualWidth(coloredValue);
+          if (coloredIconW != iconW || coloredLabelW != labelWidth || coloredValueW != valueW)
+            debug_log(
+              "Width mismatch! Icon: {} vs {}, Label: {} vs {}, Value: {} vs {}",
+              // clang-format off
+              iconW,      coloredIconW,
+              labelWidth, coloredLabelW,
+              valueW,     coloredValueW
+              // clang-format on
+            );
+        }
 
-        group.coloredIcons.push_back(coloredIcon);
-        group.coloredLabels.push_back(coloredLabel);
-        group.coloredValues.push_back(coloredValue);
+        group.coloredIcons.push_back(std::move(coloredIcon));
+        group.coloredLabels.push_back(std::move(coloredLabel));
+        group.coloredValues.push_back(std::move(coloredValue));
 
         // Don't include value width for autoWrap rows - they will wrap to fit available width
         if (!row.autoWrap)
@@ -1051,8 +1053,8 @@ namespace draconis::ui {
             const usize
               firstLineWidth = GetVisualWidth(wrappedLines[0]),
               firstPadding   = (maxContentWidth >= leftWidth + firstLineWidth + 1)
-                ? maxContentWidth - (leftWidth + firstLineWidth)
-                : 1;
+              ? maxContentWidth - (leftWidth + firstLineWidth)
+              : 1;
 
             out += "│";
             out += group.coloredIcons[i];
@@ -1083,8 +1085,8 @@ namespace draconis::ui {
           const usize
             rightWidth = group.valueWidths[i],
             padding    = (maxContentWidth >= leftWidth + rightWidth)
-               ? maxContentWidth - (leftWidth + rightWidth)
-               : 0;
+            ? maxContentWidth - (leftWidth + rightWidth)
+            : 0;
 
           out += "│";
           out += group.coloredIcons[i];

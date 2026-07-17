@@ -367,7 +367,7 @@ namespace {
       return result;
     }
 
-  private:
+   private:
     static void throwOnError(DracErrorCode code, const char* context) {
       if (code != DRAC_SUCCESS)
         throw std::runtime_error(std::string(context) + " failed with code " + std::to_string(static_cast<int>(code)));

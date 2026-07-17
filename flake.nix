@@ -50,7 +50,6 @@
               doCheck = false;
               cmakeFlags = (old.cmakeFlags or []) ++ ["-DMAGIC_ENUM_OPT_BUILD_TESTS=OFF"];
             }))
-            mimalloc
             (sqlitecpp.overrideAttrs (old: {
               postInstall =
                 (old.postInstall or "")

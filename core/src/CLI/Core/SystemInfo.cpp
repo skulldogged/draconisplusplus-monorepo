@@ -1,5 +1,7 @@
 #include "SystemInfo.hpp"
 
+#include <future>
+
 #include <Drac++/Core/System.hpp>
 
 #if DRAC_ENABLE_PLUGINS
@@ -63,8 +65,19 @@ namespace draconis::core::system {
     }
   } // namespace
 
-  SystemInfo::SystemInfo(utils::cache::CacheManager& cache, const Config& config) {
+  SystemInfo::SystemInfo(
+    utils::cache::CacheManager& cache,
+    const Config&               config,
+    StringView                  compactTemplate
+  ) {
     debug_log("SystemInfo: Starting construction");
+
+    const bool collectAll = compactTemplate.empty();
+    const auto wants      = [&](StringView key) -> bool {
+      if (collectAll)
+        return true;
+      return compactTemplate.find(std::format("{{{}}}", key)) != StringView::npos;
+    };
 
     // I'm not sure if AMD uses trademark symbols in their CPU models, but I know
     // Intel does. Might as well replace them with their unicode counterparts.
@@ -82,42 +95,55 @@ namespace draconis::core::system {
       return value;
     };
 
-    debug_log("SystemInfo: Getting desktop environment");
-    this->desktopEnv = GetDesktopEnvironment(cache);
-    debug_log("SystemInfo: Getting window manager");
-    this->windowMgr = GetWindowManager(cache);
-    debug_log("SystemInfo: Getting operating system");
-    this->operatingSystem = GetOperatingSystem(cache);
-    debug_log("SystemInfo: Getting kernel version");
-    this->kernelVersion = GetKernelVersion(cache);
-    debug_log("SystemInfo: Getting host");
-    this->host = GetHost(cache);
-    debug_log("SystemInfo: Getting CPU model");
-    this->cpuModel = replaceTrademarkSymbols(GetCPUModel(cache));
-    debug_log("SystemInfo: Getting CPU cores");
-    this->cpuCores = GetCPUCores(cache);
-    debug_log("SystemInfo: Getting GPU model");
-    this->gpuModel = GetGPUModel(cache);
-    debug_log("SystemInfo: Getting shell");
-    this->shell = GetShell(cache);
-    debug_log("SystemInfo: Getting memory info");
-    this->memInfo = GetMemInfo(cache);
-    debug_log("SystemInfo: Getting disk usage");
-    this->diskUsage = GetDiskUsage(cache);
-    debug_log("SystemInfo: Getting uptime");
-    this->uptime = GetUptime();
-    debug_log("SystemInfo: Getting date");
-    this->date = GetDate();
+    Option<std::future<Result<String>>> windowManagerFuture;
+    Option<std::future<Result<String>>> gpuModelFuture;
+    if (utils::cache::CacheManager::ignoreCache.load(std::memory_order_relaxed)) {
+      if (wants("wm"))
+        windowManagerFuture.emplace(std::async(std::launch::async, [&cache] { return GetWindowManager(cache); }));
+      if (wants("gpu"))
+        gpuModelFuture.emplace(std::async(std::launch::async, [&cache] { return GetGPUModel(cache); }));
+    }
+
+    if (wants("de"))
+      this->desktopEnv = GetDesktopEnvironment(cache);
+    if (wants("wm") && !windowManagerFuture)
+      this->windowMgr = GetWindowManager(cache);
+    if (wants("os") || wants("os_name") || wants("os_version") || wants("os_id"))
+      this->operatingSystem = GetOperatingSystem(cache);
+    if (wants("kernel"))
+      this->kernelVersion = GetKernelVersion(cache);
+    if (wants("host"))
+      this->host = GetHost(cache);
+    if (wants("cpu"))
+      this->cpuModel = replaceTrademarkSymbols(GetCPUModel(cache));
+    if (wants("cpu_cores_physical") || wants("cpu_cores_logical"))
+      this->cpuCores = GetCPUCores(cache);
+    if (wants("gpu") && !gpuModelFuture)
+      this->gpuModel = GetGPUModel(cache);
+    if (wants("shell"))
+      this->shell = GetShell(cache);
+    if (wants("ram") || wants("memory_used_bytes") || wants("memory_total_bytes"))
+      this->memInfo = GetMemInfo(cache);
+    if (wants("disk") || wants("disk_used_bytes") || wants("disk_total_bytes"))
+      this->diskUsage = GetDiskUsage(cache);
+    if (wants("uptime") || wants("uptime_seconds"))
+      this->uptime = GetUptime();
+    if (wants("date"))
+      this->date = GetDate();
+
+    if (windowManagerFuture)
+      this->windowMgr = windowManagerFuture->get();
+    if (gpuModelFuture)
+      this->gpuModel = gpuModelFuture->get();
 
 #if DRAC_ENABLE_PACKAGECOUNT
-    debug_log("SystemInfo: Getting package count");
-    this->packageCount = draconis::services::packages::GetTotalCount(cache, config.enabledPackageManagers);
+    if (wants("packages"))
+      this->packageCount = draconis::services::packages::GetTotalCount(cache, config.enabledPackageManagers);
 #endif
 
 #if DRAC_ENABLE_PLUGINS
-    debug_log("SystemInfo: Collecting plugin data");
-    // Collect plugin data efficiently (only if plugins are enabled and initialized)
-    collectPluginData(cache);
+    if (collectAll || compactTemplate.find("{plugin_") != StringView::npos)
+      collectPluginData(cache);
 #endif
     debug_log("SystemInfo: Construction complete");
   }
@@ -208,89 +234,73 @@ namespace draconis::core::system {
     if (!pluginManager.isInitialized())
       return;
 
-    // Load discovered plugins automatically
-    Vec<String> discoveredPlugins = pluginManager.listDiscoveredPlugins();
-    debug_log("Attempting to load {} discovered plugins", discoveredPlugins.size());
-
-    for (const auto& pluginName : discoveredPlugins) {
-      if (!pluginManager.isPluginLoaded(pluginName)) {
-        debug_log("Loading plugin: {}", pluginName);
-        if (auto result = pluginManager.loadPlugin(pluginName, cache); !result)
-          debug_log("Failed to load plugin '{}': {}", pluginName, result.error().message);
-        else
-          debug_log("Successfully loaded plugin: {}", pluginName);
-      } else {
-        debug_log("Plugin '{}' is already loaded", pluginName);
-      }
-    }
+    pluginManager.loadPluginsOfType(draconis::core::plugin::PluginType::InfoProvider, cache);
 
     // Get all info provider plugins (high-performance lookup)
-    Vec<IInfoProviderPlugin*> infoProviderPlugins = pluginManager.getInfoProviderPlugins();
+    const auto infoProviderPlugins = pluginManager.getInfoProviderPlugins();
 
     debug_log("Found {} info provider plugins", infoProviderPlugins.size());
 
     if (infoProviderPlugins.empty())
       return;
 
-    // Collect data from each plugin efficiently
-    // Create a PluginCache using the persistent cache directory for plugins
-    PluginCache pluginCacheInstance(utils::cache::CacheManager::getPersistentCacheDir() / "plugins");
+    struct CollectedPlugin {
+      String                               id;
+      draconis::core::plugin::PluginFields fields;
+      PluginDisplayInfo                    display;
+      bool                                 collected = false;
+    };
 
-    for (IInfoProviderPlugin* plugin : infoProviderPlugins) {
-      if (!plugin || !plugin->isReady()) {
-        debug_log("Skipping plugin - null or not ready");
-        continue;
-      }
+    const auto collectOne = [](IInfoProviderPlugin* plugin) -> Option<CollectedPlugin> {
+      if (!plugin || !plugin->isReady() || !plugin->isEnabled())
+        return None;
 
-      if (!plugin->isEnabled()) {
-        debug_log("Skipping plugin - disabled in config");
-        continue;
-      }
-
-      const auto& metadata = plugin->getMetadata();
-      const auto  pluginId = plugin->getProviderId();
-      debug_log("Collecting data from plugin: {} (id: {})", metadata.name, pluginId);
-
-      PluginDisplayInfo displayInfo {
-        .icon  = plugin->getDisplayIcon(),
-        .label = plugin->getDisplayLabel()
+      const auto&     metadata = plugin->getMetadata();
+      CollectedPlugin collected {
+        .id      = plugin->getProviderId(),
+        .fields  = {                               },
+        .display = {
+                    .icon  = plugin->getDisplayIcon(), .label = plugin->getDisplayLabel(),
+                    },
       };
 
       try {
-        // Collect plugin data with error handling
-        if (auto result = plugin->collectData(pluginCacheInstance); result) {
-          // Get fields from plugin
-          auto fields = plugin->getFields();
-          debug_log("Plugin '{}' collected {} fields", metadata.name, fields.size());
-
-          // Create entry for this plugin and move data efficiently
-          auto& pluginFields = pluginData[pluginId];
-          for (auto&& [key, value] : fields) {
-            debug_log("Adding plugin field: {}[{}] = {}", pluginId, key, draconis::core::plugin::PluginFieldToString(value));
-            pluginFields.emplace(key, std::move(value));
-          }
-
+        PluginCache pluginCache(utils::cache::CacheManager::getPersistentCacheDir() / "plugins");
+        if (auto result = plugin->collectData(pluginCache); result) {
+          collected.fields    = plugin->getFields();
+          collected.collected = true;
           if (auto displayValue = plugin->getDisplayValue(); displayValue)
-            displayInfo.value = *displayValue;
+            collected.display.value = *displayValue;
           else
-            displayInfo.error = displayValue.error().message;
+            collected.display.error = displayValue.error().message;
         } else {
-          debug_log("Plugin '{}' failed to collect data: {}", metadata.name, result.error().message);
-          displayInfo.error = result.error().message;
+          collected.display.error = result.error().message;
         }
-      } catch (const std::exception& e) {
-        debug_log("Exception in plugin '{}': {}", metadata.name, e.what());
-        displayInfo.error = e.what();
+      } catch (const std::exception& exception) {
+        debug_log("Exception in plugin '{}': {}", metadata.name, exception.what());
+        collected.display.error = exception.what();
       } catch (...) {
         debug_log("Unknown exception in plugin '{}'", metadata.name);
-        displayInfo.error = "Unknown plugin exception";
+        collected.display.error = "Unknown plugin exception";
       }
 
       if (auto lastError = plugin->getLastError())
-        displayInfo.error = *lastError;
+        collected.display.error = *lastError;
 
-      pluginDisplay[pluginId] = std::move(displayInfo);
-    }
+      return collected;
+    };
+
+    Vec<std::future<Option<CollectedPlugin>>> futures;
+    futures.reserve(infoProviderPlugins.size());
+    for (IInfoProviderPlugin* plugin : infoProviderPlugins)
+      futures.emplace_back(std::async(std::launch::async, collectOne, plugin));
+
+    for (auto& future : futures)
+      if (auto collected = future.get()) {
+        if (collected->collected)
+          pluginData.emplace(collected->id, std::move(collected->fields));
+        pluginDisplay.emplace(std::move(collected->id), std::move(collected->display));
+      }
 
     debug_log("Total plugins with data: {}", pluginData.size());
   }

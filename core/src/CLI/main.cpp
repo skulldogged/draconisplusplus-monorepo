@@ -5,12 +5,10 @@
   #include <Drac++/Core/PluginManager.hpp>
 #endif
 
-#ifdef _WIN32
-  #include <objbase.h> // CoInitializeEx, COINIT_MULTITHREADED
-#endif
-
 #include <algorithm>
 #include <cctype>
+#include <magic_enum/magic_enum.hpp>
+#include <typeinfo>
 
 #include <Drac++/Utils/ArgumentParser.hpp>
 #include <Drac++/Utils/CacheManager.hpp>
@@ -31,6 +29,7 @@ using namespace draconis::core::system;
 using namespace draconis::config;
 using namespace draconis::ui;
 using namespace draconis::cli;
+using draconis::utils::error::DracError;
 
 struct CliOptions {
   // Modes
@@ -63,10 +62,6 @@ struct CliOptions {
 };
 
 auto main(const i32 argc, CStr* argv[]) -> i32 try {
-#ifdef _WIN32
-  CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-#endif
-
   CliOptions opts;
 
   {
@@ -218,7 +213,7 @@ auto main(const i32 argc, CStr* argv[]) -> i32 try {
   cache.setGlobalPolicy(CachePolicy::tempDirectory());
 
   if (opts.clearCache) {
-    const u8 removedCount = cache.invalidateAll(true);
+    const usize removedCount = cache.invalidateAll(true);
 
     if (removedCount > 0)
       Println("Removed {} files.", removedCount);
@@ -283,27 +278,38 @@ auto main(const i32 argc, CStr* argv[]) -> i32 try {
     // Initialize plugin system early for maximum performance
     auto& pluginManager = draconis::core::plugin::GetPluginManager();
 
+    const auto pluginInitStart = std::chrono::steady_clock::now();
     if (auto initResult = pluginManager.initialize(config.plugins); !initResult)
       warn_log("Plugin system initialization failed: {}", initResult.error().message);
     else
       debug_log("Plugin system initialized successfully");
-
+    const f64 pluginInitializationMs = std::chrono::duration<f64, std::milli>(
+                                         std::chrono::steady_clock::now() - pluginInitStart
+    )
+                                         .count();
     // Handle plugin-specific commands with early exit for performance
+    if (opts.listPlugins || !opts.pluginInfo.empty()) {
+      pluginManager.loadPluginsOfType(draconis::core::plugin::PluginType::InfoProvider, cache);
+      pluginManager.loadPluginsOfType(draconis::core::plugin::PluginType::OutputFormat, cache);
+    }
+
     if (opts.listPlugins)
       return HandleListPluginsCommand(pluginManager);
 
     if (!opts.pluginInfo.empty())
       return HandlePluginInfoCommand(pluginManager, opts.pluginInfo);
+#else
+    constexpr f64 pluginInitializationMs = 0.0;
 #endif
 
     // Handle benchmark mode (runs timing for each data source)
     if (opts.benchmarkMode) {
-      Vec<BenchmarkResult> results = RunBenchmark(cache, config);
+      Vec<BenchmarkResult> results = RunBenchmark(cache, config, pluginInitializationMs);
       PrintBenchmarkReport(results);
       return EXIT_SUCCESS;
     }
 
-    SystemInfo data(cache, config);
+    SystemInfo data(cache, config, opts.compactFormat);
 
     if (opts.doctorMode) {
       PrintDoctorReport(data);
@@ -324,7 +330,20 @@ auto main(const i32 argc, CStr* argv[]) -> i32 try {
   }
 
   return EXIT_SUCCESS;
+} catch (const DracError& e) {
+  error_log(
+    "Unhandled DracError [{}] at {}:{} ({}): {}",
+    magic_enum::enum_name(e.code),
+    e.location.file_name(),
+    e.location.line(),
+    e.location.function_name(),
+    e.message
+  );
+  return EXIT_FAILURE;
 } catch (const Exception& e) {
-  error_at(e);
+  error_log("Unhandled standard exception [{}]: {}", typeid(e).name(), e.what());
+  return EXIT_FAILURE;
+} catch (...) {
+  error_log("Unhandled non-standard C++ exception (type and message unavailable)");
   return EXIT_FAILURE;
 }

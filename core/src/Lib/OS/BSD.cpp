@@ -118,8 +118,7 @@ namespace {
       nullptr
     ));
 
-    if (!wmWindowReply || wmWindowReply->type != ATOM_WINDOW || wmWindowReply->format != 32 ||
-        GetPropertyValueLength(wmWindowReply.get()) == 0)
+    if (!wmWindowReply || wmWindowReply->type != ATOM_WINDOW || wmWindowReply->format != 32 || GetPropertyValueLength(wmWindowReply.get()) == 0)
       return Err(DracError(DracErrorCode::NotFound, "Failed to get _NET_SUPPORTING_WM_CHECK property"));
 
     const window_t wmRootWindow = *static_cast<window_t*>(GetPropertyValue(wmWindowReply.get()));
@@ -181,8 +180,7 @@ namespace {
     if (compositorNameView.empty() || compositorNameView == "." || compositorNameView == "/")
       return Err(DracError(DracErrorCode::NotFound, "Failed to get compositor name from path"));
 
-    if (constexpr StringView wrappedSuffix = "-wrapped"; compositorNameView.length() > 1 + wrappedSuffix.length() &&
-        compositorNameView[0] == '.' && compositorNameView.ends_with(wrappedSuffix)) {
+    if (constexpr StringView wrappedSuffix = "-wrapped"; compositorNameView.length() > 1 + wrappedSuffix.length() && compositorNameView[0] == '.' && compositorNameView.ends_with(wrappedSuffix)) {
       const StringView cleanedView =
         compositorNameView.substr(1, compositorNameView.length() - 1 - wrappedSuffix.length());
 
@@ -218,8 +216,7 @@ namespace draconis::core::system {
 
             String value = str.substr(prefix.size());
 
-            if ((value.length() >= 2 && value.front() == '"' && value.back() == '"') ||
-                (value.length() >= 2 && value.front() == '\'' && value.back() == '\''))
+            if ((value.length() >= 2 && value.front() == '"' && value.back() == '"') || (value.length() >= 2 && value.front() == '\'' && value.back() == '\''))
               value = value.substr(1, value.length() - 2);
 
             return value;

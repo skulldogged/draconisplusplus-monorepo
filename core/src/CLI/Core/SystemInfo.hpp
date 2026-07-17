@@ -127,7 +127,11 @@ namespace draconis::core::system {
      */
     [[nodiscard]] auto toMap() const -> types::Map<types::String, types::String>;
 
-    explicit SystemInfo(utils::cache::CacheManager& cache, const Config& config);
+    explicit SystemInfo(
+      utils::cache::CacheManager& cache,
+      const Config&               config,
+      types::StringView           compactTemplate = {}
+    );
 
    private:
 #if DRAC_ENABLE_PLUGINS

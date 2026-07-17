@@ -205,7 +205,6 @@ refactor: simplify OS detection logic
 
 ## Key Dependencies
 
-- **mimalloc** - allocator
 - **glaze** - JSON/BEVE
 - **magic_enum** - enum reflection
 - **boost.ut** - testing

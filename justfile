@@ -12,6 +12,9 @@ default:
 # Build directory
 build_dir := "build"
 
+# Python executable name differs between Windows and Unix-like systems.
+python_cmd := if os() == "windows" { "python" } else { "python3" }
+
 # Platform-specific executable path
 exe_path := if os() == "windows" { ".\\build\\core\\src\\CLI\\draconis++.exe" } else { "./build/core/src/CLI/draconis++" }
 
@@ -45,7 +48,7 @@ build-verbose:
 
 # Build in release mode
 release:
-    meson setup {{build_dir}} --buildtype=release --reconfigure
+    meson setup {{build_dir}} --buildtype=release -Db_lto=true --reconfigure
     meson compile -C {{build_dir}}
 
 # ===================== #
@@ -93,7 +96,7 @@ rebuild: clean build
 
 # Format all source files
 format:
-    clang-format -i core/src core/include c-api/src c-api/include bindings/lua/src bindings/python/src
+    {{python_cmd}} tools/clang_format.py core/src core/include c-api/src c-api/include bindings/lua/src bindings/python/src
 
 # Run static analysis
 lint:

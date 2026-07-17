@@ -41,6 +41,7 @@ namespace {
     return nullptr;
   }
 
+#if DRAC_ENABLE_PLUGINS
   auto ToCPluginFieldValue(const PluginFieldValue& value) -> DracPluginFieldValue {
     return std::visit(
       [](const auto& inner) -> DracPluginFieldValue {
@@ -137,6 +138,7 @@ namespace {
         break;
     }
   }
+#endif
 
 } // namespace
 
@@ -788,8 +790,8 @@ extern "C" {
       return result;
 
     PluginFields fields = plugin->inner->getFields();
-    result.count               = fields.size();
-    result.items               = new DracPluginField[fields.size()];
+    result.count        = fields.size();
+    result.items        = new DracPluginField[fields.size()];
 
     size_t idx = 0;
     for (const auto& [key, value] : fields) {

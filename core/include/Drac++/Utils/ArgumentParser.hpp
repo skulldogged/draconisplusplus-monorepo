@@ -579,7 +579,7 @@ namespace draconis::utils::argparse {
           std::exit(0);
         }
 
-        auto iter = m_argumentMap.find(types::String(arg));
+        auto iter = m_argumentMap.find(arg);
         if (iter == m_argumentMap.end())
           ERR_FMT(error::DracErrorCode::InvalidArgument, "Unknown argument: {}", arg);
 
@@ -654,7 +654,7 @@ namespace draconis::utils::argparse {
      */
     template <typename T = types::String>
     auto get(types::StringView name) const -> T {
-      auto iter = m_argumentMap.find(types::String(name));
+      auto iter = m_argumentMap.find(name);
 
       if (iter != m_argumentMap.end())
         return iter->second->get<T>();
@@ -670,7 +670,7 @@ namespace draconis::utils::argparse {
      */
     template <typename EnumType>
     auto getEnum(types::StringView name) const -> EnumType {
-      auto iter = m_argumentMap.find(types::String(name));
+      auto iter = m_argumentMap.find(name);
 
       if (iter != m_argumentMap.end())
         return iter->second->getEnum<EnumType>();
@@ -686,7 +686,7 @@ namespace draconis::utils::argparse {
      * @return true if the argument was used, false otherwise
      */
     [[nodiscard]] auto isUsed(types::StringView name) const -> bool {
-      auto iter = m_argumentMap.find(types::String(name));
+      auto iter = m_argumentMap.find(name);
       if (iter != m_argumentMap.end())
         return iter->second->isUsed();
 

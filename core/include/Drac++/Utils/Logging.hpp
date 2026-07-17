@@ -343,8 +343,7 @@ namespace draconis::utils::logging {
 
     template <typename T>
     static auto create(types::StringView k, const T& v) -> Field {
-      if constexpr (std::is_same_v<std::decay_t<T>, types::String> || std::is_same_v<std::decay_t<T>, types::StringView> ||
-                    std::is_same_v<std::decay_t<T>, const char*> || std::is_same_v<std::decay_t<T>, char*>) {
+      if constexpr (std::is_same_v<std::decay_t<T>, types::String> || std::is_same_v<std::decay_t<T>, types::StringView> || std::is_same_v<std::decay_t<T>, const char*> || std::is_same_v<std::decay_t<T>, char*>) {
         return Field { k, types::String(v) };
       } else if constexpr (std::is_same_v<std::decay_t<T>, bool>) {
         return Field { k, v ? "true" : "false" };
@@ -384,9 +383,9 @@ namespace draconis::utils::logging {
    * @brief Information about an active span.
    */
   struct SpanInfo {
-    types::String      name;
-    types::Vec<Field>  fields;
-    types::String      target;
+    types::String     name;
+    types::Vec<Field> fields;
+    types::String     target;
   };
 
   /**
@@ -402,9 +401,9 @@ namespace draconis::utils::logging {
    * @brief RAII guard that enters a span on construction and exits on destruction.
    */
   class SpanGuard {
-  public:
+   public:
     SpanGuard(types::String name, types::String target, types::Vec<Field> fields = {})
-        : m_active(true) {
+      : m_active(true) {
       GetSpanStack().push(SpanInfo { std::move(name), std::move(fields), std::move(target) });
     }
 
@@ -431,7 +430,7 @@ namespace draconis::utils::logging {
       return *this;
     }
 
-  private:
+   private:
     bool m_active;
   };
 
@@ -456,7 +455,7 @@ namespace draconis::utils::logging {
       return types::String(func.substr(0, parenPos));
 
     // Find where the namespace/class path starts (skip return type)
-    auto spacePos = func.rfind(' ', lastColonPos);
+    auto         spacePos = func.rfind(' ', lastColonPos);
     types::usize startPos = (spacePos != types::StringView::npos) ? spacePos + 1 : 0;
 
     return types::String(func.substr(startPos, lastColonPos - startPos));
@@ -627,118 +626,163 @@ namespace draconis::utils::logging {
 #define field(name, value) ::draconis::utils::logging::Field::create(#name, value)
 
 // Span macros - create an RAII span guard
-#define span_enter(name, ...)                      \
-  auto _drac_span_guard_##__LINE__ =               \
-    ::draconis::utils::logging::SpanGuard(         \
-      #name,                                       \
-      DRAC_LOG_TARGET,                             \
+#define span_enter(name, ...)                                                          \
+  auto _drac_span_guard_##__LINE__ =                                                   \
+    ::draconis::utils::logging::SpanGuard(                                             \
+      #name,                                                                           \
+      DRAC_LOG_TARGET,                                                                 \
       ::draconis::utils::types::Vec<::draconis::utils::logging::Field> { __VA_ARGS__ } \
     )
 
 // Log macros with target and optional fields
-#define trace_log(fmt, ...) \
-  ::draconis::utils::logging::LogImpl( \
-    ::draconis::utils::logging::LogLevel::Trace, \
-    std::source_location::current(), \
-    DRAC_LOG_TARGET, \
-    fmt __VA_OPT__(, ) __VA_ARGS__)
+#define trace_log(fmt, ...)                                                                              \
+  do {                                                                                                   \
+    if (::draconis::utils::logging::LogLevel::Trace >= ::draconis::utils::logging::GetRuntimeLogLevel()) \
+      ::draconis::utils::logging::LogImpl(                                                               \
+        ::draconis::utils::logging::LogLevel::Trace,                                                     \
+        std::source_location::current(),                                                                 \
+        DRAC_LOG_TARGET,                                                                                 \
+        fmt __VA_OPT__(, ) __VA_ARGS__                                                                   \
+      );                                                                                                 \
+  } while (false)
 
-#define debug_log(fmt, ...) \
-  ::draconis::utils::logging::LogImpl( \
-    ::draconis::utils::logging::LogLevel::Debug, \
-    std::source_location::current(), \
-    DRAC_LOG_TARGET, \
-    fmt __VA_OPT__(, ) __VA_ARGS__)
+#define debug_log(fmt, ...)                                                                              \
+  do {                                                                                                   \
+    if (::draconis::utils::logging::LogLevel::Debug >= ::draconis::utils::logging::GetRuntimeLogLevel()) \
+      ::draconis::utils::logging::LogImpl(                                                               \
+        ::draconis::utils::logging::LogLevel::Debug,                                                     \
+        std::source_location::current(),                                                                 \
+        DRAC_LOG_TARGET,                                                                                 \
+        fmt __VA_OPT__(, ) __VA_ARGS__                                                                   \
+      );                                                                                                 \
+  } while (false)
 
-#define info_log(fmt, ...) \
-  ::draconis::utils::logging::LogImpl( \
-    ::draconis::utils::logging::LogLevel::Info, \
-    std::source_location::current(), \
-    DRAC_LOG_TARGET, \
-    fmt __VA_OPT__(, ) __VA_ARGS__)
+#define info_log(fmt, ...)                                                                              \
+  do {                                                                                                  \
+    if (::draconis::utils::logging::LogLevel::Info >= ::draconis::utils::logging::GetRuntimeLogLevel()) \
+      ::draconis::utils::logging::LogImpl(                                                              \
+        ::draconis::utils::logging::LogLevel::Info,                                                     \
+        std::source_location::current(),                                                                \
+        DRAC_LOG_TARGET,                                                                                \
+        fmt __VA_OPT__(, ) __VA_ARGS__                                                                  \
+      );                                                                                                \
+  } while (false)
 
-#define warn_log(fmt, ...) \
-  ::draconis::utils::logging::LogImpl( \
-    ::draconis::utils::logging::LogLevel::Warn, \
-    std::source_location::current(), \
-    DRAC_LOG_TARGET, \
-    fmt __VA_OPT__(, ) __VA_ARGS__)
+#define warn_log(fmt, ...)                                                                              \
+  do {                                                                                                  \
+    if (::draconis::utils::logging::LogLevel::Warn >= ::draconis::utils::logging::GetRuntimeLogLevel()) \
+      ::draconis::utils::logging::LogImpl(                                                              \
+        ::draconis::utils::logging::LogLevel::Warn,                                                     \
+        std::source_location::current(),                                                                \
+        DRAC_LOG_TARGET,                                                                                \
+        fmt __VA_OPT__(, ) __VA_ARGS__                                                                  \
+      );                                                                                                \
+  } while (false)
 
-#define error_log(fmt, ...) \
-  ::draconis::utils::logging::LogImpl( \
-    ::draconis::utils::logging::LogLevel::Error, \
-    std::source_location::current(), \
-    DRAC_LOG_TARGET, \
-    fmt __VA_OPT__(, ) __VA_ARGS__)
+#define error_log(fmt, ...)                                                                              \
+  do {                                                                                                   \
+    if (::draconis::utils::logging::LogLevel::Error >= ::draconis::utils::logging::GetRuntimeLogLevel()) \
+      ::draconis::utils::logging::LogImpl(                                                               \
+        ::draconis::utils::logging::LogLevel::Error,                                                     \
+        std::source_location::current(),                                                                 \
+        DRAC_LOG_TARGET,                                                                                 \
+        fmt __VA_OPT__(, ) __VA_ARGS__                                                                   \
+      );                                                                                                 \
+  } while (false)
 
 // Log with fields macros
-#define trace_log_fields(fields_vec, fmt, ...) \
-  ::draconis::utils::logging::LogImpl( \
-    ::draconis::utils::logging::LogLevel::Trace, \
-    std::source_location::current(), \
-    DRAC_LOG_TARGET, \
-    fields_vec, \
-    fmt __VA_OPT__(, ) __VA_ARGS__)
+#define trace_log_fields(fields_vec, fmt, ...)                                                           \
+  do {                                                                                                   \
+    if (::draconis::utils::logging::LogLevel::Trace >= ::draconis::utils::logging::GetRuntimeLogLevel()) \
+      ::draconis::utils::logging::LogImpl(                                                               \
+        ::draconis::utils::logging::LogLevel::Trace,                                                     \
+        std::source_location::current(),                                                                 \
+        DRAC_LOG_TARGET,                                                                                 \
+        fields_vec,                                                                                      \
+        fmt __VA_OPT__(, ) __VA_ARGS__                                                                   \
+      );                                                                                                 \
+  } while (false)
 
-#define debug_log_fields(fields_vec, fmt, ...) \
-  ::draconis::utils::logging::LogImpl( \
-    ::draconis::utils::logging::LogLevel::Debug, \
-    std::source_location::current(), \
-    DRAC_LOG_TARGET, \
-    fields_vec, \
-    fmt __VA_OPT__(, ) __VA_ARGS__)
+#define debug_log_fields(fields_vec, fmt, ...)                                                           \
+  do {                                                                                                   \
+    if (::draconis::utils::logging::LogLevel::Debug >= ::draconis::utils::logging::GetRuntimeLogLevel()) \
+      ::draconis::utils::logging::LogImpl(                                                               \
+        ::draconis::utils::logging::LogLevel::Debug,                                                     \
+        std::source_location::current(),                                                                 \
+        DRAC_LOG_TARGET,                                                                                 \
+        fields_vec,                                                                                      \
+        fmt __VA_OPT__(, ) __VA_ARGS__                                                                   \
+      );                                                                                                 \
+  } while (false)
 
-#define info_log_fields(fields_vec, fmt, ...) \
-  ::draconis::utils::logging::LogImpl( \
-    ::draconis::utils::logging::LogLevel::Info, \
-    std::source_location::current(), \
-    DRAC_LOG_TARGET, \
-    fields_vec, \
-    fmt __VA_OPT__(, ) __VA_ARGS__)
+#define info_log_fields(fields_vec, fmt, ...)                                                           \
+  do {                                                                                                  \
+    if (::draconis::utils::logging::LogLevel::Info >= ::draconis::utils::logging::GetRuntimeLogLevel()) \
+      ::draconis::utils::logging::LogImpl(                                                              \
+        ::draconis::utils::logging::LogLevel::Info,                                                     \
+        std::source_location::current(),                                                                \
+        DRAC_LOG_TARGET,                                                                                \
+        fields_vec,                                                                                     \
+        fmt __VA_OPT__(, ) __VA_ARGS__                                                                  \
+      );                                                                                                \
+  } while (false)
 
-#define warn_log_fields(fields_vec, fmt, ...) \
-  ::draconis::utils::logging::LogImpl( \
-    ::draconis::utils::logging::LogLevel::Warn, \
-    std::source_location::current(), \
-    DRAC_LOG_TARGET, \
-    fields_vec, \
-    fmt __VA_OPT__(, ) __VA_ARGS__)
+#define warn_log_fields(fields_vec, fmt, ...)                                                           \
+  do {                                                                                                  \
+    if (::draconis::utils::logging::LogLevel::Warn >= ::draconis::utils::logging::GetRuntimeLogLevel()) \
+      ::draconis::utils::logging::LogImpl(                                                              \
+        ::draconis::utils::logging::LogLevel::Warn,                                                     \
+        std::source_location::current(),                                                                \
+        DRAC_LOG_TARGET,                                                                                \
+        fields_vec,                                                                                     \
+        fmt __VA_OPT__(, ) __VA_ARGS__                                                                  \
+      );                                                                                                \
+  } while (false)
 
-#define error_log_fields(fields_vec, fmt, ...) \
-  ::draconis::utils::logging::LogImpl( \
-    ::draconis::utils::logging::LogLevel::Error, \
-    std::source_location::current(), \
-    DRAC_LOG_TARGET, \
-    fields_vec, \
-    fmt __VA_OPT__(, ) __VA_ARGS__)
+#define error_log_fields(fields_vec, fmt, ...)                                                           \
+  do {                                                                                                   \
+    if (::draconis::utils::logging::LogLevel::Error >= ::draconis::utils::logging::GetRuntimeLogLevel()) \
+      ::draconis::utils::logging::LogImpl(                                                               \
+        ::draconis::utils::logging::LogLevel::Error,                                                     \
+        std::source_location::current(),                                                                 \
+        DRAC_LOG_TARGET,                                                                                 \
+        fields_vec,                                                                                      \
+        fmt __VA_OPT__(, ) __VA_ARGS__                                                                   \
+      );                                                                                                 \
+  } while (false)
 
 // Error object logging macros
-#define trace_at(error_obj) \
-  ::draconis::utils::logging::LogError( \
+#define trace_at(error_obj)                      \
+  ::draconis::utils::logging::LogError(          \
     ::draconis::utils::logging::LogLevel::Trace, \
-    DRAC_LOG_TARGET, \
-    error_obj)
+    DRAC_LOG_TARGET,                             \
+    error_obj                                    \
+  )
 
-#define debug_at(error_obj) \
-  ::draconis::utils::logging::LogError( \
+#define debug_at(error_obj)                      \
+  ::draconis::utils::logging::LogError(          \
     ::draconis::utils::logging::LogLevel::Debug, \
-    DRAC_LOG_TARGET, \
-    error_obj)
+    DRAC_LOG_TARGET,                             \
+    error_obj                                    \
+  )
 
-#define info_at(error_obj) \
-  ::draconis::utils::logging::LogError( \
+#define info_at(error_obj)                      \
+  ::draconis::utils::logging::LogError(         \
     ::draconis::utils::logging::LogLevel::Info, \
-    DRAC_LOG_TARGET, \
-    error_obj)
+    DRAC_LOG_TARGET,                            \
+    error_obj                                   \
+  )
 
-#define warn_at(error_obj) \
-  ::draconis::utils::logging::LogError( \
+#define warn_at(error_obj)                      \
+  ::draconis::utils::logging::LogError(         \
     ::draconis::utils::logging::LogLevel::Warn, \
-    DRAC_LOG_TARGET, \
-    error_obj)
+    DRAC_LOG_TARGET,                            \
+    error_obj                                   \
+  )
 
-#define error_at(error_obj) \
-  ::draconis::utils::logging::LogError( \
+#define error_at(error_obj)                      \
+  ::draconis::utils::logging::LogError(          \
     ::draconis::utils::logging::LogLevel::Error, \
-    DRAC_LOG_TARGET, \
-    error_obj)
+    DRAC_LOG_TARGET,                             \
+    error_obj                                    \
+  )

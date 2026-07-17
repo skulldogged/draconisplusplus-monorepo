@@ -7,19 +7,6 @@
 }: let
   muslPkgs = import nixpkgs {
     system = "x86_64-linux-musl";
-    overlays = [
-      (final: prev: {
-        mimalloc = prev.mimalloc.overrideAttrs (oldAttrs: {
-          cmakeFlags =
-            (oldAttrs.cmakeFlags or [])
-            ++ [(final.lib.cmakeBool "MI_LIBC_MUSL" true)];
-
-          postPatch = ''
-            sed -i '\|<linux/prctl.h>|s|^|// |' src/prim/unix/prim.c
-          '';
-        });
-      })
-    ];
   };
 
   llvmPackages = muslPkgs.llvmPackages_20;
@@ -91,7 +78,6 @@
     }))
     glaze
     llvmPackages_20.libcxx
-    mimalloc
     (magic-enum.overrideAttrs (old: {
       doCheck = false;
       cmakeFlags = (old.cmakeFlags or []) ++ ["-DMAGIC_ENUM_OPT_BUILD_TESTS=OFF"];
@@ -136,6 +122,7 @@
       mesonFlags = [
         "-Dbuild_for_musl=true"
         "-Dbuild_examples=false"
+        "-Db_lto=true"
         "-Duse_linked_pci_ids=true"
         # Fully static binary: dlopen is unavailable, so disable the plugin
         # system. For plugins in a musl build, override with

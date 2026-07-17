@@ -358,27 +358,27 @@ extern "C" {
   } DracPluginFieldValueType;
 
   typedef struct DracPluginFieldValue DracPluginFieldValue;
-  typedef struct DracPluginField DracPluginField;
+  typedef struct DracPluginField      DracPluginField;
 
   typedef struct DracPluginFieldValueArray {
     DracPluginFieldValue* items;
-    size_t count;
+    size_t                count;
   } DracPluginFieldValueArray;
 
   typedef struct DracPluginFieldValueObject {
     DracPluginField* items;
-    size_t count;
+    size_t           count;
   } DracPluginFieldValueObject;
 
   struct DracPluginFieldValue {
     DracPluginFieldValueType type;
     union {
-      bool                      boolValue;
-      int64_t                   i64Value;
-      uint64_t                  u64Value;
-      double                    f64Value;
-      char*                     stringValue;
-      DracPluginFieldValueArray arrayValue;
+      bool                       boolValue;
+      int64_t                    i64Value;
+      uint64_t                   u64Value;
+      double                     f64Value;
+      char*                      stringValue;
+      DracPluginFieldValueArray  arrayValue;
       DracPluginFieldValueObject objectValue;
     };
   };
@@ -398,13 +398,13 @@ extern "C" {
   DRAC_C_API void DracShutdownPluginManager(void);
 
   // Plugin discovery
-  DRAC_C_API void DracAddPluginSearchPath(const char* path);
+  DRAC_C_API void               DracAddPluginSearchPath(const char* path);
   DRAC_C_API DracPluginInfoList DracDiscoverPlugins(void);
 
   // Plugin loading - by ID (searches paths) or by explicit path
   DRAC_C_API DracPlugin* DracLoadPlugin(const char* pluginId);
   DRAC_C_API DracPlugin* DracLoadPluginFromPath(const char* path);
-  DRAC_C_API void DracUnloadPlugin(DracPlugin* plugin);
+  DRAC_C_API void        DracUnloadPlugin(DracPlugin* plugin);
 
   // Plugin initialization
   DRAC_C_API DracErrorCode DracPluginInitialize(DracPlugin* plugin, DracCacheManager* cache);
@@ -417,9 +417,9 @@ extern "C" {
   DRAC_C_API bool DracPluginIsReady(DracPlugin* plugin);
 
   // Plugin data
-  DRAC_C_API DracErrorCode DracPluginCollectData(DracPlugin* plugin, DracCacheManager* cache);
+  DRAC_C_API DracErrorCode       DracPluginCollectData(DracPlugin* plugin, DracCacheManager* cache);
   DRAC_C_API DracPluginFieldList DracPluginGetFields(DracPlugin* plugin);
-  DRAC_C_API char* DracPluginGetLastError(DracPlugin* plugin);
+  DRAC_C_API char*               DracPluginGetLastError(DracPlugin* plugin);
 
   // Memory cleanup
   DRAC_C_API void DracFreePluginInfoList(DracPluginInfoList* list);

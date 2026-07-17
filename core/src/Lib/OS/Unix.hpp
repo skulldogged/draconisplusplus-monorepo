@@ -247,15 +247,13 @@ namespace draconis::os::unix_shared {
    */
   [[nodiscard]] inline auto FormatIPv4(const sockaddr_in* addr, char* buf, types::usize bufSize)
     -> types::Option<types::String> {
-    if (getnameinfo(
-          reinterpret_cast<const sockaddr*>(addr), // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
-          sizeof(sockaddr_in),
-          buf,
-          static_cast<socklen_t>(bufSize),
-          nullptr,
-          0,
-          NI_NUMERICHOST
-        ) == 0)
+    if (getnameinfo(reinterpret_cast<const sockaddr*>(addr), // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+                    sizeof(sockaddr_in),
+                    buf,
+                    static_cast<socklen_t>(bufSize),
+                    nullptr,
+                    0,
+                    NI_NUMERICHOST) == 0)
       return types::String(buf);
 
     return types::None;
@@ -270,15 +268,13 @@ namespace draconis::os::unix_shared {
    */
   [[nodiscard]] inline auto FormatIPv6(const sockaddr_in6* addr, char* buf, types::usize bufSize)
     -> types::Option<types::String> {
-    if (getnameinfo(
-          reinterpret_cast<const sockaddr*>(addr), // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
-          sizeof(sockaddr_in6),
-          buf,
-          static_cast<socklen_t>(bufSize),
-          nullptr,
-          0,
-          NI_NUMERICHOST
-        ) == 0)
+    if (getnameinfo(reinterpret_cast<const sockaddr*>(addr), // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+                    sizeof(sockaddr_in6),
+                    buf,
+                    static_cast<socklen_t>(bufSize),
+                    nullptr,
+                    0,
+                    NI_NUMERICHOST) == 0)
       return types::String(buf);
 
     return types::None;

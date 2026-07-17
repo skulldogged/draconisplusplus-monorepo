@@ -20,10 +20,10 @@
 
 #if DRAC_ENABLE_PLUGINS
 
+  #include <cstddef>
+
   #include "../Utils/Types.hpp"
   #include "Plugin.hpp"
-
-  #include <cstddef>
 
 namespace draconis::core::plugin {
   /**
@@ -53,7 +53,7 @@ namespace draconis::core::plugin {
   /**
    * @brief Initialize all static plugins
    * @return Number of plugins registered
-   * 
+   *
    * This function MUST be called before using any static plugins.
    * It calls all DracRegisterPlugin_* functions exported by plugins.
    */

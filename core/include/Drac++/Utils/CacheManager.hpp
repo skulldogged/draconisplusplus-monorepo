@@ -1,8 +1,23 @@
 #pragma once
 
+#include <any>
+#include <atomic>
 #include <chrono>
+#include <concepts>
+#include <condition_variable>
 #include <filesystem>
+#include <functional>
 #include <glaze/glaze.hpp>
+#include <memory>
+#include <thread>
+#include <utility>
+
+#ifdef _WIN32
+  #ifndef NOMINMAX
+    #define NOMINMAX
+  #endif
+  #include <windows.h>
+#endif
 
 #include "DataTypes.hpp"
 #include "Env.hpp"
@@ -52,7 +67,7 @@ namespace draconis::utils::cache {
      * fetcher each time. This makes it easy for the CLI to offer a
      * "--ignore-cache" option without having to modify every call-site.
      */
-    static inline bool ignoreCache = false;
+    static inline std::atomic_bool ignoreCache = false;
 
     /**
      * @brief Get the persistent cache directory path for the current platform.
@@ -73,6 +88,10 @@ namespace draconis::utils::cache {
 #endif
     }
 
+    static auto getTempCacheDir() -> fs::path {
+      return fs::temp_directory_path() / "draconis++";
+    }
+
     CacheManager() : m_globalPolicy { .location = CacheLocation::Persistent, .ttl = days(1) } {}
 
     auto setGlobalPolicy(const CachePolicy& policy) -> types::Unit {
@@ -86,90 +105,136 @@ namespace draconis::utils::cache {
       types::Option<types::u64> expires; // store as UNIX timestamp (seconds since epoch), None if no expiry
     };
 
-    template <typename T>
+    struct MemoryCacheEntry {
+      std::any                 data;
+      system_clock::time_point expires;
+    };
+
+    struct InFlightEntry {
+      std::condition_variable completedCondition;
+      std::any                outcome;
+      bool                    completed = false;
+    };
+
+    template <typename T, typename Fetcher>
     auto getOrSet(
-      const types::String&          key,
-      types::Option<CachePolicy>    overridePolicy,
-      types::Fn<types::Result<T>()> fetcher
+      const types::String&       key,
+      types::Option<CachePolicy> overridePolicy,
+      Fetcher&&                  fetcher
     ) -> types::Result<T> {
       if constexpr (DRAC_ENABLE_CACHING) {
-        /* Early-exit if caching is globally disabled for this run. */
-        if (ignoreCache)
+        if (ignoreCache.load(std::memory_order_relaxed))
           return fetcher();
 
-        types::LockGuard lock(m_cacheMutex);
+        static_assert(std::copy_constructible<T>, "Cached values must be copy constructible");
 
-        const CachePolicy& policy = overridePolicy.value_or(m_globalPolicy);
+        CachePolicy                    policy;
+        types::u64                     keyGeneration    = 0;
+        types::u64                     globalGeneration = 0;
+        std::shared_ptr<InFlightEntry> inFlight;
 
-        // 1. Check in-memory cache
-        if (const auto iter = m_inMemoryCache.find(key); iter != m_inMemoryCache.end())
-          if (
-            CacheEntry<T> entry; glz::read_beve(entry, iter->second.first) == glz::error_code::none &&
-            (!entry.expires.has_value() || system_clock::now() < system_clock::time_point(seconds(*entry.expires)))
-          )
-            return entry.data;
+        // Claim this key's fetch slot. Waiters share the leader's typed result.
+        for (;;) {
+          std::unique_lock lock(m_cacheMutex);
+          policy = overridePolicy.value_or(m_globalPolicy);
 
-        // 2. Check filesystem cache
-        const types::Option<fs::path> filePath = getCacheFilePath(key, policy.location);
+          if (const auto iter = m_inMemoryCache.find(key); iter != m_inMemoryCache.end()) {
+            if (system_clock::now() >= iter->second.expires) {
+              m_inMemoryCache.erase(iter);
+            } else if (const auto* value = std::any_cast<T>(&iter->second.data)) {
+              return *value;
+            } else {
+              m_inMemoryCache.erase(iter);
+            }
+          }
 
-        if (filePath && fs::exists(*filePath)) {
-          if (std::ifstream ifs(*filePath, std::ios::binary); ifs) {
-            std::string fileContents((std::istreambuf_iterator<char>(ifs)), {});
+          if (const auto iter = m_inFlight.find(key); iter != m_inFlight.end()) {
+            inFlight = iter->second;
+            inFlight->completedCondition.wait(lock, [&inFlight] { return inFlight->completed; });
 
-            CacheEntry<T> entry;
+            if (const auto* outcome = std::any_cast<types::Result<T>>(&inFlight->outcome))
+              return *outcome;
 
-            if (glz::read_beve(entry, fileContents) == glz::error_code::none) {
-              if (!entry.expires.has_value() || system_clock::now() < system_clock::time_point(seconds(*entry.expires))) {
-                system_clock::time_point expiryTp = entry.expires.has_value() ? system_clock::time_point(seconds(*entry.expires)) : system_clock::time_point::max();
+            // A simultaneous caller used this key with a different type.
+            continue;
+          }
 
-                m_inMemoryCache[key] = { fileContents, expiryTp };
+          inFlight = std::make_shared<InFlightEntry>();
+          m_inFlight.emplace(key, inFlight);
+          keyGeneration    = getKeyGenerationLocked(key);
+          globalGeneration = m_globalGeneration;
+          break;
+        }
 
-                return entry.data;
+        auto complete = [this, &key, &inFlight](const types::Result<T>* outcome) {
+          completeInFlight(key, inFlight, outcome);
+        };
+
+        try {
+          const types::Option<fs::path> filePath = getCacheFilePath(key, policy.location);
+
+          if (filePath) {
+            std::error_code existsError;
+            if (fs::exists(*filePath, existsError) && !existsError) {
+              bool validDiskEntry = false;
+
+              if (types::Option<types::String> fileContents = readCacheFile(*filePath)) {
+                CacheEntry<T> entry;
+                if (glz::read_beve(entry, *fileContents) == glz::error_code::none) {
+                  const system_clock::time_point expiry = entry.expires.has_value()
+                    ? system_clock::time_point(seconds(*entry.expires))
+                    : system_clock::time_point::max();
+
+                  if (system_clock::now() < expiry) {
+                    validDiskEntry              = true;
+                    types::Result<T> diskResult = entry.data;
+                    publishMemoryIfCurrent(key, entry.data, expiry, keyGeneration, globalGeneration);
+                    complete(&diskResult);
+                    return diskResult;
+                  }
+                }
+              }
+
+              if (!validDiskEntry) {
+                std::error_code removeError;
+                fs::remove(*filePath, removeError);
               }
             }
           }
-        }
 
-        // 3. Cache miss: call fetcher (move the callable to indicate consumption)
-        types::Result<T> fetchedResult = fetcher();
+          types::Result<T> fetchedResult = fetcher();
 
-        if (!fetchedResult)
-          return fetchedResult;
-
-        // 4. Store in cache
-        types::Option<types::u64> expiryTs;
-        if (policy.ttl.has_value()) {
-          system_clock::time_point now        = system_clock::now();
-          system_clock::time_point expiryTime = now + *policy.ttl;
-
-          expiryTs = duration_cast<seconds>(expiryTime.time_since_epoch()).count();
-        }
-
-        CacheEntry<T> newEntry {
-          .data    = *fetchedResult,
-          .expires = expiryTs
-        };
-
-        std::string binaryBuffer;
-        glz::write_beve(newEntry, binaryBuffer);
-
-        system_clock::time_point inMemoryExpiryTp = expiryTs.has_value()
-          ? system_clock::time_point(seconds(*expiryTs))
-          : system_clock::time_point::max();
-
-        m_inMemoryCache[key] = { binaryBuffer, inMemoryExpiryTp };
-
-        if (policy.location != CacheLocation::InMemory && filePath) {
-          std::error_code errc;
-          fs::create_directories(filePath->parent_path(), errc);
-          if (!errc) {
-            if (std::ofstream ofs(*filePath, std::ios::binary | std::ios::trunc); ofs.is_open()) {
-              ofs.write(binaryBuffer.data(), static_cast<std::streamsize>(binaryBuffer.size()));
-            }
+          if (!fetchedResult) {
+            complete(&fetchedResult);
+            return fetchedResult;
           }
-        }
 
-        return fetchedResult;
+          types::Option<types::u64> expiryTimestamp;
+          system_clock::time_point  expiry = system_clock::time_point::max();
+          if (policy.ttl.has_value()) {
+            expiry          = system_clock::now() + *policy.ttl;
+            expiryTimestamp = duration_cast<seconds>(expiry.time_since_epoch()).count();
+          }
+
+          const bool published = publishMemoryIfCurrent(key, *fetchedResult, expiry, keyGeneration, globalGeneration);
+
+          if (published && policy.location != CacheLocation::InMemory && filePath) {
+            CacheEntry<T> newEntry {
+              .data    = *fetchedResult,
+              .expires = expiryTimestamp
+            };
+
+            types::String binaryBuffer;
+            glz::write_beve(newEntry, binaryBuffer);
+            writeCacheFileAtomically(*filePath, binaryBuffer, key, keyGeneration, globalGeneration);
+          }
+
+          complete(&fetchedResult);
+          return fetchedResult;
+        } catch (...) {
+          complete(nullptr);
+          throw;
+        }
       } else {
         (void)key;
         (void)overridePolicy;
@@ -177,9 +242,9 @@ namespace draconis::utils::cache {
       }
     }
 
-    template <typename T>
-    auto getOrSet(const types::String& key, types::Fn<types::Result<T>()> fetcher) -> types::Result<T> {
-      return getOrSet(key, types::None, fetcher);
+    template <typename T, typename Fetcher>
+    auto getOrSet(const types::String& key, Fetcher&& fetcher) -> types::Result<T> {
+      return getOrSet<T>(key, types::None, std::forward<Fetcher>(fetcher));
     }
 
     /**
@@ -194,13 +259,11 @@ namespace draconis::utils::cache {
     auto invalidate(const types::String& key) -> types::Unit {
       if constexpr (DRAC_ENABLE_CACHING) {
         types::LockGuard lock(m_cacheMutex);
-
-        // Erase from in-memory cache (no harm if the key is absent).
         m_inMemoryCache.erase(key);
+        ++m_keyGenerations[key];
 
-        // Attempt to remove the on-disk copies for both possible locations.
         for (const CacheLocation loc : { CacheLocation::TempDirectory, CacheLocation::Persistent })
-          if (const types::Option<fs::path> filePath = getCacheFilePath(key, loc); filePath && fs::exists(*filePath)) {
+          if (const types::Option<fs::path> filePath = getCacheFilePath(key, loc); filePath) {
             std::error_code errc;
             fs::remove(*filePath, errc);
           }
@@ -216,69 +279,15 @@ namespace draconis::utils::cache {
      * persistent and temporary cache directories while preserving the
      * directory structure.
      */
-    auto invalidateAll(bool logRemovals = false) -> types::u8 {
+    auto invalidateAll(bool logRemovals = false) -> types::usize {
       if constexpr (DRAC_ENABLE_CACHING) {
         types::LockGuard lock(m_cacheMutex);
-
-        types::u8 removedCount = 0;
-
-        // Record keys currently present so we can clean their temp-dir copies
-        // after we clear the map.
-        types::Vec<types::String> keys;
-        keys.reserve(m_inMemoryCache.size());
-        for (const auto& [key, val] : m_inMemoryCache)
-          keys.emplace_back(key);
-
-        // Clear in-memory cache.
         m_inMemoryCache.clear();
+        m_keyGenerations.clear();
+        ++m_globalGeneration;
 
-        // Remove all files from persistent cache directory.
-        const fs::path persistentDir = getPersistentCacheDir();
-
-        if (fs::exists(persistentDir)) {
-          std::error_code errc;
-          for (const fs::directory_entry& entry : fs::recursive_directory_iterator(persistentDir, errc))
-            if (entry.is_regular_file()) {
-              fs::remove(entry.path(), errc);
-              removedCount++;
-              if (logRemovals)
-                info_log("Removed persistent cache file: {}", entry.path().string());
-            }
-        }
-
-        // Remove all files from temp directory that match our cache pattern.
-        const fs::path tempDir = fs::temp_directory_path();
-        if (fs::exists(tempDir)) {
-          std::error_code errc;
-          for (const fs::directory_entry& entry : fs::directory_iterator(tempDir, errc)) {
-            if (entry.is_regular_file()) {
-              // Check if this file is one of our cache files by looking at known keys
-              // or by checking if it's a file we might have created
-              bool shouldRemove = false;
-
-              // Remove files that match our known keys
-              for (const types::String& key : keys)
-                if (entry.path().filename() == key) {
-                  shouldRemove = true;
-                  break;
-                }
-
-              // Also remove any files that might be orphaned cache files
-              // (files that don't have extensions and are likely our cache files)
-              if (!shouldRemove && entry.path().extension().empty())
-                shouldRemove = true;
-
-              if (shouldRemove) {
-                fs::remove(entry.path(), errc);
-                removedCount++;
-                if (logRemovals)
-                  info_log("Removed temp-directory cache file: {}", entry.path().string());
-              }
-            }
-          }
-        }
-
-        return removedCount;
+        return removeCacheFiles(getPersistentCacheDir(), logRemovals, "persistent") +
+          removeCacheFiles(getTempCacheDir(), logRemovals, "temporary");
       } else {
         (void)logRemovals;
         return 0;
@@ -288,29 +297,181 @@ namespace draconis::utils::cache {
    private:
     CachePolicy m_globalPolicy;
 
-    // BEVE-encoded cache entries (for typed data with automatic serialization)
-    types::UnorderedMap<types::String, types::Pair<types::String, system_clock::time_point>> m_inMemoryCache;
+    // Typed values avoid deserializing BEVE data on every in-memory hit.
+    types::UnorderedMap<types::String, MemoryCacheEntry>               m_inMemoryCache;
+    types::UnorderedMap<types::String, std::shared_ptr<InFlightEntry>> m_inFlight;
+    types::UnorderedMap<types::String, types::u64>                     m_keyGenerations;
+    types::u64                                                         m_globalGeneration = 0;
 
     types::Mutex m_cacheMutex;
 
+    static inline std::atomic<types::u64> m_tempFileCounter = 0;
+
+    auto getKeyGenerationLocked(const types::String& key) const -> types::u64 {
+      if (const auto iter = m_keyGenerations.find(key); iter != m_keyGenerations.end())
+        return iter->second;
+      return 0;
+    }
+
+    auto isGenerationCurrentLocked(
+      const types::String& key,
+      const types::u64     keyGeneration,
+      const types::u64     globalGeneration
+    ) const -> bool {
+      return m_globalGeneration == globalGeneration && getKeyGenerationLocked(key) == keyGeneration;
+    }
+
+    template <typename T>
+    auto publishMemoryIfCurrent(
+      const types::String&           key,
+      const T&                       value,
+      const system_clock::time_point expiry,
+      const types::u64               keyGeneration,
+      const types::u64               globalGeneration
+    ) -> bool {
+      types::LockGuard lock(m_cacheMutex);
+      if (!isGenerationCurrentLocked(key, keyGeneration, globalGeneration))
+        return false;
+
+      m_inMemoryCache.insert_or_assign(key, MemoryCacheEntry { .data = value, .expires = expiry });
+      return true;
+    }
+
+    template <typename T>
+    auto completeInFlight(
+      const types::String&                  key,
+      const std::shared_ptr<InFlightEntry>& inFlight,
+      const types::Result<T>*               outcome
+    ) -> types::Unit {
+      {
+        types::LockGuard lock(m_cacheMutex);
+        if (outcome)
+          inFlight->outcome = *outcome;
+        inFlight->completed = true;
+
+        if (const auto iter = m_inFlight.find(key); iter != m_inFlight.end() && iter->second == inFlight)
+          m_inFlight.erase(iter);
+      }
+      inFlight->completedCondition.notify_all();
+    }
+
+    static auto readCacheFile(const fs::path& path) -> types::Option<types::String> {
+      std::ifstream stream(path, std::ios::binary | std::ios::ate);
+      if (!stream)
+        return types::None;
+
+      const std::streampos endPosition = stream.tellg();
+      if (endPosition < 0)
+        return types::None;
+
+      types::String contents(static_cast<types::usize>(endPosition), '\0');
+      stream.seekg(0, std::ios::beg);
+      if (!contents.empty() && !stream.read(contents.data(), static_cast<std::streamsize>(contents.size())))
+        return types::None;
+
+      return contents;
+    }
+
+    static auto makeTemporaryFilePath(const fs::path& path) -> fs::path {
+      const auto timestamp = std::chrono::steady_clock::now().time_since_epoch().count();
+      const auto threadId  = std::hash<std::thread::id> {}(std::this_thread::get_id());
+      const auto counter   = m_tempFileCounter.fetch_add(1, std::memory_order_relaxed);
+
+      fs::path temporaryPath = path;
+      temporaryPath += std::format(".tmp.{}.{}.{}", timestamp, threadId, counter);
+      return temporaryPath;
+    }
+
+    auto writeCacheFileAtomically(
+      const fs::path&      path,
+      const types::String& contents,
+      const types::String& key,
+      const types::u64     keyGeneration,
+      const types::u64     globalGeneration
+    ) -> bool {
+      std::error_code error;
+      fs::create_directories(path.parent_path(), error);
+      if (error)
+        return false;
+
+      const fs::path temporaryPath  = makeTemporaryFilePath(path);
+      bool           writeSucceeded = false;
+      {
+        std::ofstream stream(temporaryPath, std::ios::binary | std::ios::trunc);
+        if (!stream)
+          return false;
+
+        stream.write(contents.data(), static_cast<std::streamsize>(contents.size()));
+        stream.flush();
+        writeSucceeded = stream.good();
+      }
+
+      if (!writeSucceeded) {
+        fs::remove(temporaryPath, error);
+        return false;
+      }
+
+      bool replaced = false;
+      {
+        types::LockGuard lock(m_cacheMutex);
+        if (isGenerationCurrentLocked(key, keyGeneration, globalGeneration)) {
+#ifdef _WIN32
+          replaced = MoveFileExW(
+                       temporaryPath.c_str(),
+                       path.c_str(),
+                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH
+                     ) != 0;
+#else
+          fs::rename(temporaryPath, path, error);
+          replaced = !error;
+#endif
+        }
+      }
+
+      if (!replaced)
+        fs::remove(temporaryPath, error);
+
+      return replaced;
+    }
+
+    static auto removeCacheFiles(
+      const fs::path&         directory,
+      const bool              logRemovals,
+      const types::StringView locationName
+    ) -> types::usize {
+      std::error_code error;
+      if (!fs::exists(directory, error) || error)
+        return 0;
+
+      types::usize removedCount = 0;
+      for (const fs::directory_entry& entry : fs::recursive_directory_iterator(directory, error)) {
+        std::error_code fileError;
+        if (!entry.is_regular_file(fileError) || fileError)
+          continue;
+
+        const fs::path& path = entry.path();
+        if (fs::remove(path, fileError) && !fileError) {
+          ++removedCount;
+          if (logRemovals)
+            info_log("Removed {} cache file: {}", locationName, path.string());
+        }
+      }
+      return removedCount;
+    }
+
     static auto getCacheFilePath(const types::String& key, const CacheLocation location) -> types::Option<fs::path> {
-      using matchit::match, matchit::is, matchit::_;
-
-      types::Option<fs::path> cacheDir = types::None;
-
       if (location == CacheLocation::InMemory)
-        return types::None; // In-memory cache does not have a file path
+        return types::None;
+
+      const fs::path keyPath(key);
+      if (key.empty() || key == "." || key == ".." || keyPath.has_root_path() || keyPath.has_parent_path())
+        return types::None;
 
       if (location == CacheLocation::TempDirectory)
-        return types::Some(fs::temp_directory_path() / key);
+        return types::Some(getTempCacheDir() / keyPath);
 
       if (location == CacheLocation::Persistent)
-        return types::Some(getPersistentCacheDir() / key);
-
-      if (cacheDir) {
-        fs::create_directories(*cacheDir);
-        return *cacheDir / key;
-      }
+        return types::Some(getPersistentCacheDir() / keyPath);
 
       return types::None;
     }

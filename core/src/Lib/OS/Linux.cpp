@@ -275,8 +275,7 @@ namespace {
       nullptr
     ));
 
-    if (!wmWindowReply || wmWindowReply->type != ATOM_WINDOW || wmWindowReply->format != 32 ||
-        GetPropertyValueLength(wmWindowReply.get()) == 0)
+    if (!wmWindowReply || wmWindowReply->type != ATOM_WINDOW || wmWindowReply->format != 32 || GetPropertyValueLength(wmWindowReply.get()) == 0)
       ERR(NotFound, "Failed to get _NET_SUPPORTING_WM_CHECK property");
 
     const Window wmRootWindow = *static_cast<Window*>(GetPropertyValue(wmWindowReply.get()));
@@ -537,8 +536,7 @@ namespace {
     if (compositorNameView.empty() || compositorNameView == "." || compositorNameView == "/")
       ERR(ParseError, "Failed to get compositor name from path");
 
-    if (constexpr StringView wrappedSuffix = "-wrapped"; compositorNameView.length() > 1 + wrappedSuffix.length() &&
-        compositorNameView[0] == '.' && compositorNameView.ends_with(wrappedSuffix)) {
+    if (constexpr StringView wrappedSuffix = "-wrapped"; compositorNameView.length() > 1 + wrappedSuffix.length() && compositorNameView[0] == '.' && compositorNameView.ends_with(wrappedSuffix)) {
       const StringView cleanedView =
         compositorNameView.substr(1, compositorNameView.length() - 1 - wrappedSuffix.length());
 
@@ -665,8 +663,7 @@ namespace draconis::core::system {
           if (StringView(line).starts_with("ID=")) {
             String value = line.substr(3);
 
-            if ((value.length() >= 2 && value.front() == '"' && value.back() == '"') ||
-                (value.length() >= 2 && value.front() == '\'' && value.back() == '\''))
+            if ((value.length() >= 2 && value.front() == '"' && value.back() == '"') || (value.length() >= 2 && value.front() == '\'' && value.back() == '\''))
               value = value.substr(1, value.length() - 2);
 
             if (value.empty())
@@ -1137,13 +1134,10 @@ namespace draconis::core::system {
 
       // Fallback: first non-loopback interface that is up (Ranges style)
       if (primaryInterfaceName.empty())
-        if (auto iter = std::ranges::find_if(
-              interfaces,
-              [](const auto& pair) -> auto {
-                const auto& iface = pair.second;
-                return iface.isUp && !iface.isLoopback;
-              }
-            );
+        if (auto iter = std::ranges::find_if(interfaces, [](const auto& pair) -> auto {
+              const auto& iface = pair.second;
+              return iface.isUp && !iface.isLoopback;
+            });
             iter != interfaces.end()) {
           primaryInterfaceName = iter->first;
         }
@@ -1171,8 +1165,7 @@ namespace draconis::core::system {
     // Find the first battery device
     fs::path batteryPath;
     for (const fs::directory_entry& entry : fs::directory_iterator(powerSupplyPath))
-      if (Result<String> typeResult = ReadSysFile(entry.path() / "type");
-          typeResult && *typeResult == "Battery") {
+      if (Result<String> typeResult = ReadSysFile(entry.path() / "type"); typeResult && *typeResult == "Battery") {
         batteryPath = entry.path();
         break;
       }

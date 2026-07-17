@@ -15,6 +15,8 @@
 #include <Drac++/Utils/Error.hpp>
 #include <Drac++/Utils/Logging.hpp>
 
+#include "UI/UI.hpp"
+
 #if DRAC_ENABLE_PLUGINS
   #include <Drac++/Core/PluginManager.hpp>
 
@@ -29,12 +31,19 @@ namespace draconis::cli {
 
   auto RunBenchmark(
     utils::cache::CacheManager& cache,
-    const Config&               config
+    const Config&               config,
+    const f64                   pluginInitializationMs
   ) -> Vec<BenchmarkResult> {
     using std::chrono::high_resolution_clock, std::chrono::duration;
 
     Vec<BenchmarkResult> results;
-    results.reserve(20);
+    results.reserve(24);
+
+    results.push_back({
+      .name       = "Plugin Initialization",
+      .durationMs = pluginInitializationMs,
+      .success    = true,
+    });
 
     // Time each data source individually
     auto timeOperation = [&results](const String& name, auto&& func) -> auto {
@@ -70,14 +79,7 @@ namespace draconis::cli {
     // Benchmark info provider plugins
     auto& pluginManager = draconis::core::plugin::GetPluginManager();
     if (pluginManager.isInitialized()) {
-      // First, load all discovered plugins
-      for (const auto& pluginName : pluginManager.listDiscoveredPlugins())
-        if (!pluginManager.isPluginLoaded(pluginName)) {
-          Result<Unit> loadResult = pluginManager.loadPlugin(pluginName, cache);
-
-          if (!loadResult)
-            Print("Warning: failed to load plugin '{}'\n", pluginName);
-        }
+      pluginManager.loadPluginsOfType(draconis::core::plugin::PluginType::InfoProvider, cache);
 
       // Create a PluginCache for benchmarking using the persistent cache directory
       PluginCache pluginCache(utils::cache::CacheManager::getPersistentCacheDir() / "plugins");
@@ -92,6 +94,24 @@ namespace draconis::cli {
           });
     }
 #endif
+
+    const auto constructionStart = high_resolution_clock::now();
+    SystemInfo benchmarkData(cache, config);
+    const auto constructionEnd = high_resolution_clock::now();
+    results.push_back({
+      .name       = "SystemInfo Construction",
+      .durationMs = duration<f64, std::milli>(constructionEnd - constructionStart).count(),
+      .success    = true,
+    });
+
+    const auto uiStart    = high_resolution_clock::now();
+    String     renderedUi = ui::CreateUI(config, benchmarkData, true);
+    const auto uiEnd      = high_resolution_clock::now();
+    results.push_back({
+      .name       = "UI Rendering",
+      .durationMs = duration<f64, std::milli>(uiEnd - uiStart).count(),
+      .success    = !renderedUi.empty(),
+    });
 
     return results;
   }
@@ -230,7 +250,7 @@ namespace draconis::cli {
 
     if (!pluginDisplay.empty()) {
       Vec<Pair<String, Option<String>>> pluginFailures;
-      Vec<String> pluginSuccesses;
+      Vec<String>                       pluginSuccesses;
 
       for (const auto& [pluginId, displayInfo] : pluginDisplay) {
         if (displayInfo.value.has_value())
@@ -293,23 +313,31 @@ namespace draconis::cli {
     // Get all system info as a map
     Map<String, String> infoMap = data.toMap();
 
-    // Generic placeholder substitution: replace all {key} with values from the map
-    String output = templateStr;
-    for (const auto& [key, value] : infoMap) {
-      String placeholder = std::format("{{{}}}", key);
-      usize  pos         = 0;
-      while ((pos = output.find(placeholder, pos)) != String::npos)
-        output.replace(pos, placeholder.length(), value);
-    }
+    // Resolve placeholders in one pass. Unknown placeholders are omitted.
+    String output;
+    output.reserve(templateStr.size());
 
-    // Remove any remaining unmatched placeholders (keys that weren't in the map)
     usize pos = 0;
-    while ((pos = output.find('{', pos)) != String::npos) {
-      usize endPos = output.find('}', pos);
-      if (endPos != String::npos)
-        output.replace(pos, endPos - pos + 1, "");
-      else
+    while (pos < templateStr.size()) {
+      const usize openPos = templateStr.find('{', pos);
+      if (openPos == String::npos) {
+        output.append(templateStr, pos);
         break;
+      }
+
+      output.append(templateStr, pos, openPos - pos);
+
+      const usize closePos = templateStr.find('}', openPos + 1);
+      if (closePos == String::npos) {
+        output.append(templateStr, openPos);
+        break;
+      }
+
+      const StringView key(templateStr.data() + openPos + 1, closePos - openPos - 1);
+      if (const auto iter = infoMap.find(key); iter != infoMap.end())
+        output += iter->second;
+
+      pos = closePos + 1;
     }
 
     Println("{}", output);
@@ -327,6 +355,12 @@ namespace draconis::cli {
       Print("Plugin system not initialized.\n");
       return;
     }
+
+    draconis::utils::cache::CacheManager pluginLoadCache;
+    pluginManager.loadPluginsOfType(
+      draconis::core::plugin::PluginType::OutputFormat,
+      pluginLoadCache
+    );
 
     // Get all loaded output format plugins directly
     auto outputPlugins = pluginManager.getOutputFormatPlugins();

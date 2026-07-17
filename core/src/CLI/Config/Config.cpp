@@ -281,15 +281,12 @@ namespace draconis::config {
     Config cfg;
     cfg.general.name = DRAC_USERNAME;
 
-#if DRAC_ENABLE_PACKAGECOUNT
+  #if DRAC_ENABLE_PACKAGECOUNT
     cfg.enabledPackageManagers = config::DRAC_ENABLED_PACKAGE_MANAGERS;
-#endif
+  #endif
 
   #if DRAC_ENABLE_PLUGINS
     cfg.plugins.enabled = true;
-    // Auto-load all statically compiled plugins
-    for (const auto& [name, entry] : draconis::core::plugin::GetStaticPluginRegistry())
-      cfg.plugins.autoLoad.emplace_back(name);
   #endif
 
     PopulatePrecompiledLayout(cfg);
@@ -361,7 +358,7 @@ namespace draconis::config {
       cfg.logo.height    = tomlCfg.logo.height == 0 ? std::nullopt : Option<u32>(tomlCfg.logo.height);
 
       // Package manager settings
-#if DRAC_ENABLE_PACKAGECOUNT
+  #if DRAC_ENABLE_PACKAGECOUNT
       {
         using enum draconis::services::packages::Manager;
 
@@ -370,11 +367,11 @@ namespace draconis::config {
         for (const String& val : tomlCfg.packages.enabled) {
           if (val == "cargo")
             cfg.enabledPackageManagers |= Cargo;
-  #if defined(__linux__) || defined(__APPLE__)
+    #if defined(__linux__) || defined(__APPLE__)
           else if (val == "nix")
             cfg.enabledPackageManagers |= Nix;
-  #endif
-  #ifdef __linux__
+    #endif
+    #ifdef __linux__
           else if (val == "apk")
             cfg.enabledPackageManagers |= Apk;
           else if (val == "dpkg")
@@ -387,44 +384,44 @@ namespace draconis::config {
             cfg.enabledPackageManagers |= Rpm;
           else if (val == "xbps")
             cfg.enabledPackageManagers |= Xbps;
-  #endif
-  #ifdef __APPLE__
+    #endif
+    #ifdef __APPLE__
           else if (val == "homebrew")
             cfg.enabledPackageManagers |= Homebrew;
           else if (val == "macports")
             cfg.enabledPackageManagers |= Macports;
-  #endif
-  #ifdef _WIN32
+    #endif
+    #ifdef _WIN32
           else if (val == "winget")
             cfg.enabledPackageManagers |= Winget;
           else if (val == "chocolatey")
             cfg.enabledPackageManagers |= Chocolatey;
           else if (val == "scoop")
             cfg.enabledPackageManagers |= Scoop;
-  #endif
-  #if defined(__FreeBSD__) || defined(__DragonFly__)
+    #endif
+    #if defined(__FreeBSD__) || defined(__DragonFly__)
           else if (val == "pkgng")
             cfg.enabledPackageManagers |= PkgNg;
-  #endif
-  #ifdef __NetBSD__
+    #endif
+    #ifdef __NetBSD__
           else if (val == "pkgsrc")
             cfg.enabledPackageManagers |= PkgSrc;
-  #endif
-  #ifdef __HAIKU__
+    #endif
+    #ifdef __HAIKU__
           else if (val == "haikupkg")
             cfg.enabledPackageManagers |= HaikuPkg;
-  #endif
+    #endif
           else
             warn_log("Unknown package manager in config: {}", val);
         }
       }
-#endif
+  #endif
 
       // Plugin settings
-#if DRAC_ENABLE_PLUGINS
+  #if DRAC_ENABLE_PLUGINS
       cfg.plugins.enabled  = tomlCfg.plugins.enabled;
       cfg.plugins.autoLoad = tomlCfg.plugins.autoLoad;
-#endif
+  #endif
 
       // UI layout settings
       cfg.ui.layout.clear();

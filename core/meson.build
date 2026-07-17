@@ -162,11 +162,15 @@ fs = import('fs')
 plugins_includes = []
 
 foreach extra_dir : get_option('plugin_dirs')
-  if not fs.is_absolute(extra_dir)
-    extra_dir = meson.project_source_root() / extra_dir
-  endif
-  if fs.is_dir(extra_dir)
-    plugins_includes += include_directories(extra_dir, is_system: true)
+  if fs.is_absolute(extra_dir)
+    if fs.is_dir(extra_dir)
+      plugins_includes += include_directories(extra_dir, is_system: true)
+    endif
+  else
+    extra_abs_dir = meson.project_source_root() / extra_dir
+    if fs.is_dir(extra_abs_dir)
+      plugins_includes += include_directories('..' / extra_dir, is_system: true)
+    endif
   endif
 endforeach
 
@@ -185,16 +189,6 @@ lib_deps += dependency(
   include_type: 'system',
   static: true,
 )
-
-# mimalloc causes issues on macOS due to mixed allocator usage with system libraries
-if host_system != 'darwin'
-  lib_deps += dependency(
-    'mimalloc',
-    fallback: ['mimalloc', 'mi_dep'],
-    include_type: 'system',
-    static: true,
-  )
-endif
 
 if feature_states['packagecount'] and host_system in ['darwin', 'linux']
   lib_deps += dependency('SQLiteCpp')
@@ -226,8 +220,6 @@ elif host_system == 'windows'
     cpp.find_library('setupapi'),
     cpp.find_library('dxgi'),
     cpp.find_library('dxguid'),
-    cpp.find_library('ole32'),
-    cpp.find_library('propsys'),
     cpp.find_library('iphlpapi'),
     cpp.find_library('ws2_32'),
   ]
@@ -249,7 +241,7 @@ elif host_system not in ['serenity', 'haiku']
 endif
 
 # Glaze (JSON/BEVE serializer/deserializer)
-glaze_dep = dependency('glaze', include_type: 'system', required: false)
+glaze_dep = dependency('glaze', include_type: 'system', required: false, version: '>=6.0.0')
 
 if not glaze_dep.found()
   cmake = import('cmake')

@@ -53,3 +53,12 @@ test_argparser = executable(
   link_args: pci_ids_link_args,
 )
 test('Argument Parser', test_argparser)
+
+# Performance helper regression tests
+test_performance_helpers = executable(
+  'test_performance_helpers',
+  'test_performance_helpers.cpp',
+  dependencies: test_deps,
+  link_args: pci_ids_link_args,
+)
+test('Performance Helpers', test_performance_helpers)

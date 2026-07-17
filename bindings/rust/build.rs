@@ -178,12 +178,6 @@ fn link_libraries(build_dir: &Path) {
     build_dir.join("core/src/Lib").display()
   );
 
-  let mimalloc_dir = build_dir.join("subprojects/mimalloc-3.1.5");
-  let has_mimalloc = mimalloc_dir.exists();
-  if has_mimalloc {
-    println!("cargo:rustc-link-search=native={}", mimalloc_dir.display());
-  }
-
   let curl_dir = build_dir.join("subprojects/curl-8.12.1/lib");
   let has_curl = curl_dir.exists();
   if has_curl {
@@ -195,10 +189,6 @@ fn link_libraries(build_dir: &Path) {
 
   if has_curl {
     println!("cargo:rustc-link-lib=static=curl");
-  }
-
-  if has_mimalloc {
-    println!("cargo:rustc-link-lib=static=mimalloc");
   }
 }
 

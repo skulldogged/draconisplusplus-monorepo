@@ -12,13 +12,12 @@
   #include <string>   // std::string
 
   #include <Drac++/Core/PluginManager.hpp>
+  #include <Drac++/Core/StaticPlugins.hpp>
 
   #include <Drac++/Utils/CacheManager.hpp>
   #include <Drac++/Utils/Env.hpp>
   #include <Drac++/Utils/Error.hpp>
   #include <Drac++/Utils/Logging.hpp>
-
-  #include <Drac++/Core/StaticPlugins.hpp>
 
   #ifdef _WIN32
     #include <windows.h>
@@ -187,14 +186,10 @@ namespace draconis::core::plugin {
 
     CacheManager cache;
 
-    // Register and load statically linked plugins; they were compiled in
-    // deliberately, so they are always loaded up front.
-    if (const std::size_t staticCount = DracInitStaticPlugins(); staticCount > 0) {
-      debug_log("Registered {} static plugin(s)", staticCount);
-      for (const auto& [className, entry] : GetStaticPluginRegistry())
-        if (auto loadResult = loadPlugin(className, cache); !loadResult)
-          warn_log("Failed to load static plugin '{}': {}", className, loadResult.error().message);
-    }
+    // Register statically linked plugins without constructing or initializing
+    // them. Callers load only the category needed by the active command.
+    const std::size_t staticCount = DracInitStaticPlugins();
+    debug_log("Registered {} static plugin(s) for lazy loading", staticCount);
 
     // Auto-load plugins from config
     for (const auto& pluginName : config.autoLoad) {
@@ -216,6 +211,7 @@ namespace draconis::core::plugin {
 
     // Unload all loaded plugins
     Vec<String> pluginNamesToUnload;
+    pluginNamesToUnload.reserve(m_plugins.size());
 
     {
       std::shared_lock<std::shared_mutex> lock(m_mutex);
@@ -243,7 +239,7 @@ namespace draconis::core::plugin {
     }
   }
 
-  auto PluginManager::getSearchPaths() const -> Vec<fs::path> {
+  auto PluginManager::getSearchPaths() const -> Span<const fs::path> {
     std::shared_lock<std::shared_mutex> lock(m_mutex);
     return m_pluginSearchPaths;
   }
@@ -256,21 +252,28 @@ namespace draconis::core::plugin {
         continue;
 
       for (const auto& entry : fs::directory_iterator(searchPath))
-        if (entry.is_regular_file() && entry.path().extension() == PLUGIN_EXTENSION) {
-          String pluginName = entry.path().stem().string();
+        if (entry.is_regular_file()) {
+          const fs::path& path = entry.path();
+          if (path.extension() != PLUGIN_EXTENSION)
+            continue;
+
+          String pluginName = path.stem().string();
           // The first discovery of a plugin with a given name wins
-          if (!m_discoveredPlugins.contains(pluginName))
-            m_discoveredPlugins.emplace(pluginName, entry.path());
+          m_discoveredPlugins.try_emplace(std::move(pluginName), path);
         }
     }
 
     return {};
   }
 
-  auto PluginManager::loadPlugin(const String& pluginName, CacheManager& cache) -> Result<Unit> {
+  auto PluginManager::loadPlugin(
+    const String&      pluginName,
+    CacheManager&      cache,
+    Option<PluginType> requiredType
+  ) -> Result<Unit> {
     std::unique_lock<std::shared_mutex> lock(m_mutex);
 
-    if (m_plugins.contains(pluginName) && m_plugins.at(pluginName).isLoaded) {
+    if (const auto iter = m_plugins.find(pluginName); iter != m_plugins.end() && iter->second.isLoaded) {
       debug_log("Plugin '{}' is already loaded.", pluginName);
       return {};
     }
@@ -311,6 +314,10 @@ namespace draconis::core::plugin {
 
       loadedPlugin.instance.reset(instance);
       loadedPlugin.metadata = loadedPlugin.instance->getMetadata();
+
+      if (requiredType && loadedPlugin.metadata.type != *requiredType)
+        return {};
+
       loadedPlugin.isLoaded = true;
 
       if (auto initResult = initializePluginInstance(loadedPlugin, cache); !initResult) {
@@ -339,10 +346,11 @@ namespace draconis::core::plugin {
     }
 
     // Fall back to dynamic loading
-    if (!m_discoveredPlugins.contains(pluginName))
+    const auto discoveredIter = m_discoveredPlugins.find(pluginName);
+    if (discoveredIter == m_discoveredPlugins.end())
       ERR_FMT(NotFound, "Plugin '{}' not found in search paths.", pluginName);
 
-    const fs::path& pluginPath = m_discoveredPlugins.at(pluginName);
+    const fs::path& pluginPath = discoveredIter->second;
 
     debug_log("Loading plugin '{}' from '{}'", pluginName, pluginPath.string());
 
@@ -369,6 +377,13 @@ namespace draconis::core::plugin {
     }
 
     loadedPlugin.metadata = loadedPlugin.instance->getMetadata();
+
+    if (requiredType && loadedPlugin.metadata.type != *requiredType) {
+      loadedPlugin.instance.reset();
+      unloadDynamicLibrary(loadedPlugin.handle);
+      return {};
+    }
+
     loadedPlugin.isLoaded = true;
 
     if (auto initResult = initializePluginInstance(loadedPlugin, cache); !initResult) {
@@ -396,13 +411,34 @@ namespace draconis::core::plugin {
     return {};
   }
 
+  auto PluginManager::loadPluginsOfType(PluginType type, CacheManager& cache) -> Unit {
+    Vec<String> candidates;
+    candidates.reserve(GetStaticPluginRegistry().size() + m_discoveredPlugins.size());
+
+    for (const auto& [name, entry] : GetStaticPluginRegistry()) {
+      (void)entry;
+      candidates.push_back(name);
+    }
+
+    for (const auto& [name, path] : m_discoveredPlugins) {
+      (void)path;
+      candidates.push_back(name);
+    }
+
+    for (const auto& name : candidates)
+      if (!isPluginLoaded(name))
+        if (auto result = loadPlugin(name, cache, type); !result)
+          debug_log("Failed to lazily load plugin '{}': {}", name, result.error().message);
+  }
+
   auto PluginManager::unloadPlugin(const String& pluginName) -> Result<Unit> {
     std::unique_lock<std::shared_mutex> lock(m_mutex);
 
-    if (!m_plugins.contains(pluginName))
+    const auto pluginIter = m_plugins.find(pluginName);
+    if (pluginIter == m_plugins.end())
       ERR_FMT(NotFound, "Plugin '{}' is not loaded.", pluginName);
 
-    LoadedPlugin& loadedPlugin = m_plugins.at(pluginName);
+    LoadedPlugin& loadedPlugin = pluginIter->second;
 
     if (loadedPlugin.isReady) {
       debug_log("Shutting down plugin instance '{}'", pluginName);
@@ -429,7 +465,7 @@ namespace draconis::core::plugin {
     // Handle static plugins (identified by nullptr handle)
     if (loadedPlugin.handle == nullptr) {
       DestroyStaticPlugin(pluginName, loadedPlugin.instance.release());
-      m_plugins.erase(pluginName);
+      m_plugins.erase(pluginIter);
       debug_log("Static plugin '{}' unloaded successfully.", pluginName);
       return {};
     }
@@ -445,20 +481,20 @@ namespace draconis::core::plugin {
     debug_log("Unloading dynamic library for plugin '{}'", pluginName);
     unloadDynamicLibrary(loadedPlugin.handle);
 
-    m_plugins.erase(pluginName);
+    m_plugins.erase(pluginIter);
     debug_log("Plugin '{}' unloaded successfully.", pluginName);
     return {};
   }
 
   auto PluginManager::getPlugin(const String& pluginName) const -> Option<IPlugin*> {
     std::shared_lock<std::shared_mutex> lock(m_mutex);
-    if (m_plugins.contains(pluginName))
-      return m_plugins.at(pluginName).instance.get();
+    if (const auto iter = m_plugins.find(pluginName); iter != m_plugins.end())
+      return iter->second.instance.get();
 
     return std::nullopt;
   }
 
-  auto PluginManager::getInfoProviderPlugins() const -> Vec<IInfoProviderPlugin*> {
+  auto PluginManager::getInfoProviderPlugins() const -> Span<IInfoProviderPlugin* const> {
     std::shared_lock<std::shared_mutex> lock(m_mutex);
     return m_infoProviderPlugins;
   }
@@ -472,7 +508,7 @@ namespace draconis::core::plugin {
     return std::nullopt;
   }
 
-  auto PluginManager::getOutputFormatPlugins() const -> Vec<IOutputFormatPlugin*> {
+  auto PluginManager::getOutputFormatPlugins() const -> Span<IOutputFormatPlugin* const> {
     std::shared_lock<std::shared_mutex> lock(m_mutex);
     return m_outputFormatPlugins;
   }
@@ -480,6 +516,7 @@ namespace draconis::core::plugin {
   auto PluginManager::listLoadedPlugins() const -> Vec<PluginMetadata> {
     std::shared_lock<std::shared_mutex> lock(m_mutex);
     Vec<PluginMetadata>                 loadedMetadata;
+    loadedMetadata.reserve(m_plugins.size());
 
     for (const auto& [name, loadedPlugin] : m_plugins)
       if (loadedPlugin.isLoaded)
@@ -495,6 +532,7 @@ namespace draconis::core::plugin {
   auto PluginManager::listDiscoveredPlugins() const -> Vec<String> {
     std::shared_lock<std::shared_mutex> lock(m_mutex);
     Vec<String>                         discoveredNames;
+    discoveredNames.reserve(m_discoveredPlugins.size());
 
     for (const auto& [name, path] : m_discoveredPlugins)
       discoveredNames.push_back(name);
@@ -505,7 +543,8 @@ namespace draconis::core::plugin {
 
   auto PluginManager::isPluginLoaded(const String& pluginName) const -> bool {
     std::shared_lock<std::shared_mutex> lock(m_mutex);
-    return m_plugins.contains(pluginName) && m_plugins.at(pluginName).isLoaded;
+    const auto                          iter = m_plugins.find(pluginName);
+    return iter != m_plugins.end() && iter->second.isLoaded;
   }
 
   auto PluginManager::loadDynamicLibrary(const fs::path& path) -> Result<DynamicLibraryHandle> {

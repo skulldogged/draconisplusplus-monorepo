@@ -35,6 +35,7 @@ namespace draconis::core::plugin {
   using utils::types::Map;
   using utils::types::Option;
   using utils::types::Result;
+  using utils::types::Span;
   using utils::types::String;
   using utils::types::UniquePointer;
   using utils::types::Unit;
@@ -128,19 +129,24 @@ namespace draconis::core::plugin {
 
     // Plugin discovery and loading
     auto addSearchPath(const fs::path& path) -> Unit;
-    auto getSearchPaths() const -> Vec<fs::path>;
+    auto getSearchPaths() const -> Span<const fs::path>;
     auto scanForPlugins() -> Result<Unit>;
-    auto loadPlugin(const String& pluginName, CacheManager& cache) -> Result<Unit>;
+    auto loadPlugin(
+      const String&      pluginName,
+      CacheManager&      cache,
+      Option<PluginType> requiredType = {}
+    ) -> Result<Unit>;
+    auto loadPluginsOfType(PluginType type, CacheManager& cache) -> Unit;
     auto unloadPlugin(const String& pluginName) -> Result<Unit>;
 
     // Plugin access (read-only, thread-safe)
     auto getPlugin(const String& pluginName) const -> Option<IPlugin*>;
-    auto getInfoProviderPlugins() const -> Vec<IInfoProviderPlugin*>;
-    auto getOutputFormatPlugins() const -> Vec<IOutputFormatPlugin*>;
+    auto getInfoProviderPlugins() const -> Span<IInfoProviderPlugin* const>;
+    auto getOutputFormatPlugins() const -> Span<IOutputFormatPlugin* const>;
     auto getInfoProviderByName(const String& providerId) const -> Option<IInfoProviderPlugin*>;
 
     // Legacy alias
-    auto getSystemInfoPlugins() const -> Vec<IInfoProviderPlugin*> {
+    auto getSystemInfoPlugins() const -> Span<IInfoProviderPlugin* const> {
       return getInfoProviderPlugins();
     }
 

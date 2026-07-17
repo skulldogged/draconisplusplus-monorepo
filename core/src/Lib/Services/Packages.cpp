@@ -28,7 +28,15 @@ using draconis::utils::cache::CacheManager;
 using enum draconis::utils::error::DracErrorCode;
 
 namespace {
-  constexpr const char* CACHE_KEY_PREFIX = "pkg_count_";
+  constexpr StringView CACHE_KEY_PREFIX = "pkg_count_";
+
+  auto MakePackageCacheKey(const StringView pmId) -> String {
+    String key;
+    key.reserve(CACHE_KEY_PREFIX.size() + pmId.size());
+    key.append(CACHE_KEY_PREFIX);
+    key.append(pmId);
+    return key;
+  }
 
   auto GetCountFromDirectoryImplNoCache(
     const String&         pmId,
@@ -49,9 +57,9 @@ namespace {
 
     fsErrCode.clear();
 
-    u64              count     = 0;
-    const bool       hasFilter = fileExtensionFilter.has_value();
-    const StringView filter    = fileExtensionFilter ? StringView(*fileExtensionFilter) : StringView();
+    u64            count      = 0;
+    const bool     hasFilter  = fileExtensionFilter.has_value();
+    const fs::path filterPath = hasFilter ? fs::path(*fileExtensionFilter) : fs::path();
 
     try {
       const fs::directory_iterator dirIter(
@@ -65,18 +73,19 @@ namespace {
 
       if (hasFilter) {
         for (const fs::directory_entry& entry : dirIter) {
-          if (entry.path().empty())
+          const fs::path& path = entry.path();
+          if (path.empty())
             continue;
 
           if (std::error_code isFileErr; entry.is_regular_file(isFileErr) && !isFileErr) {
-            if (entry.path().extension().string() == filter)
+            if (path.extension() == filterPath)
               count++;
           } else if (isFileErr)
-            warn_log("Error stating entry '{}' in {} directory: {}", entry.path().string(), pmId, isFileErr.message());
+            warn_log("Error stating entry '{}' in {} directory: {}", path.string(), pmId, isFileErr.message());
         }
       } else {
         for (const fs::directory_entry& entry : dirIter) {
-          if (!entry.path().empty())
+          if (const fs::path& path = entry.path(); !path.empty())
             count++;
         }
       }
@@ -101,7 +110,7 @@ namespace {
     const Option<String>& fileExtensionFilter,
     const bool            subtractOne
   ) -> Result<u64> {
-    return cache.getOrSet<u64>(std::format("{}{}", CACHE_KEY_PREFIX, pmId), [&]() -> Result<u64> {
+    return cache.getOrSet<u64>(MakePackageCacheKey(pmId), [&]() -> Result<u64> {
       return GetCountFromDirectoryImplNoCache(pmId, dirPath, fileExtensionFilter, subtractOne);
     });
   }
@@ -147,7 +156,7 @@ namespace draconis::services::packages {
     const fs::path& dbPath,
     const String&   countQuery
   ) -> Result<u64> {
-    return cache.getOrSet<u64>(std::format("{}{}", CACHE_KEY_PREFIX, pmId), [&]() -> Result<u64> {
+    return cache.getOrSet<u64>(MakePackageCacheKey(pmId), [&]() -> Result<u64> {
       u64 count = 0;
 
       try {
@@ -184,7 +193,7 @@ namespace draconis::services::packages {
     const String&   pmId,
     const fs::path& plistPath
   ) -> Result<u64> {
-    return cache.getOrSet<u64>(std::format("{}{}", CACHE_KEY_PREFIX, pmId), [&]() -> Result<u64> {
+    return cache.getOrSet<u64>(MakePackageCacheKey(pmId), [&]() -> Result<u64> {
       xml_document doc;
 
       if (const xml_parse_result result = doc.load_file(plistPath.c_str()); !result)

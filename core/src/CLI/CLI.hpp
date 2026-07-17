@@ -34,7 +34,8 @@ namespace draconis::cli {
    */
   auto RunBenchmark(
     utils::cache::CacheManager& cache,
-    const config::Config&       config
+    const config::Config&       config,
+    utils::types::f64           pluginInitializationMs
   ) -> utils::types::Vec<BenchmarkResult>;
 
   /**

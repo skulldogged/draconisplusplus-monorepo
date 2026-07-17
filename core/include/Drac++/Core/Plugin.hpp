@@ -21,9 +21,10 @@
 #include <chrono>
 #include <concepts>
 #include <filesystem>
-#include <fstream>
 #include <format>
+#include <fstream>
 #include <glaze/glaze.hpp>
+#include <iterator>
 #include <type_traits>
 
 // Required for DRAC_PLUGIN macro which uses draconis::utils::logging::LogLevel and SetLogLevelPtr
@@ -209,7 +210,7 @@ namespace draconis::core::plugin {
 
   struct PluginFieldValue;
 
-  using PluginFieldArray = utils::types::Vec<PluginFieldValue>;
+  using PluginFieldArray  = utils::types::Vec<PluginFieldValue>;
   using PluginFieldObject = utils::types::Map<utils::types::String, PluginFieldValue>;
 
   using PluginFieldValueBase = utils::types::Variant<
@@ -250,42 +251,28 @@ namespace draconis::core::plugin {
   using PluginFields = PluginFieldObject;
   using PluginData   = utils::types::Map<utils::types::String, PluginFields>;
 
-  [[nodiscard]] inline auto PluginFieldToString(const PluginFieldValue& value) -> utils::types::String {
+  inline auto AppendPluginFieldValue(utils::types::String& result, const PluginFieldValue& value) -> utils::types::Unit {
     using namespace utils::types;
 
-    return std::visit(
-      [](const auto& inner) -> String {
+    std::visit(
+      [&result](const auto& inner) -> Unit {
         using T = std::decay_t<decltype(inner)>;
 
         if constexpr (std::same_as<T, bool>)
-          return inner ? "true" : "false";
+          result += inner ? "true" : "false";
         else if constexpr (std::same_as<T, i64> || std::same_as<T, u64>)
-          return std::to_string(inner);
+          std::format_to(std::back_inserter(result), "{}", inner);
         else if constexpr (std::same_as<T, f64>)
-          return std::format("{}", inner);
+          std::format_to(std::back_inserter(result), "{}", inner);
         else if constexpr (std::same_as<T, String>)
-          return inner;
+          result += inner;
         else if constexpr (std::same_as<T, PluginFieldArray>) {
-          String result;
-          usize  size = 0;
-          for (const PluginFieldValue& item : inner)
-            size += PluginFieldToString(item).size() + 2;
-          result.reserve(size);
-
           for (usize i = 0; i < inner.size(); ++i) {
             if (i > 0)
               result += ", ";
-            result += PluginFieldToString(inner[i]);
+            AppendPluginFieldValue(result, inner[i]);
           }
-
-          return result;
         } else {
-          String result;
-          usize  size = 0;
-          for (const auto& [key, item] : inner)
-            size += key.size() + PluginFieldToString(item).size() + 3;
-          result.reserve(size);
-
           bool first = true;
           for (const auto& [key, item] : inner) {
             if (!first)
@@ -293,14 +280,19 @@ namespace draconis::core::plugin {
             first = false;
             result += key;
             result += ": ";
-            result += PluginFieldToString(item);
+            AppendPluginFieldValue(result, item);
           }
-
-          return result;
         }
       },
       static_cast<const PluginFieldValueBase&>(value)
     );
+  }
+
+  [[nodiscard]] inline auto PluginFieldToString(const PluginFieldValue& value) -> utils::types::String {
+    utils::types::String result;
+    result.reserve(64);
+    AppendPluginFieldValue(result, value);
+    return result;
   }
 
   /**
@@ -439,16 +431,16 @@ namespace draconis::core::plugin {
      * @return Formatted output string or error
      */
     virtual auto formatOutput(
-      const utils::types::String&                                                                                   formatName,
-      const utils::types::Map<utils::types::String, utils::types::String>&                                          data,
-      const PluginData&                                                                                             pluginData
+      const utils::types::String&                                          formatName,
+      const utils::types::Map<utils::types::String, utils::types::String>& data,
+      const PluginData&                                                    pluginData
     ) const -> utils::types::Result<utils::types::String> = 0;
 
     /**
      * @brief Get all format names this plugin supports
-     * @return Vector of supported format names (e.g., {"json", "json-pretty"})
+     * @return View of supported format names (e.g., {"json", "json-pretty"})
      */
-    [[nodiscard]] virtual auto getFormatNames() const -> utils::types::Vec<utils::types::String> = 0;
+    [[nodiscard]] virtual auto getFormatNames() const -> utils::types::Span<const utils::types::String> = 0;
 
     /**
      * @brief Get file extension for a given format
@@ -468,9 +460,9 @@ namespace glz {
     template <auto Opts>
     static auto op(
       const draconis::core::plugin::PluginFieldValue& value,
-      auto&&                                         ctx,
-      auto&&                                         buffer,
-      auto&&                                         index
+      auto&&                                          ctx,
+      auto&&                                          buffer,
+      auto&&                                          index
     ) -> void {
       std::visit(
         [&](const auto& inner) -> void {
@@ -515,21 +507,21 @@ namespace glz {
 
   // For static builds, each plugin exports a Register function
   // that is called by DracInitStaticPlugins()
-  #define DRAC_PLUGIN(PluginClass)                                                       \
-    namespace draconis::plugins {                                                        \
-      static auto Create_##PluginClass() -> ::draconis::core::plugin::IPlugin* {         \
-        return new PluginClass();                                                        \
-      }                                                                                  \
-      static auto Destroy_##PluginClass(::draconis::core::plugin::IPlugin* p) -> void {  \
-        delete p;                                                                        \
-      }                                                                                  \
-    }                                                                                    \
-    extern "C" DRAC_PLUGIN_API void DracRegisterPlugin_##PluginClass() {                 \
-      ::draconis::core::plugin::RegisterStaticPlugin(                                    \
-        #PluginClass,                                                                    \
-        { ::draconis::plugins::Create_##PluginClass,                                     \
-          ::draconis::plugins::Destroy_##PluginClass }                                   \
-      );                                                                                 \
+  #define DRAC_PLUGIN(PluginClass)                                                      \
+    namespace draconis::plugins {                                                       \
+      static auto Create_##PluginClass() -> ::draconis::core::plugin::IPlugin* {        \
+        return new PluginClass();                                                       \
+      }                                                                                 \
+      static auto Destroy_##PluginClass(::draconis::core::plugin::IPlugin* p) -> void { \
+        delete p;                                                                       \
+      }                                                                                 \
+    }                                                                                   \
+    extern "C" DRAC_PLUGIN_API void DracRegisterPlugin_##PluginClass() {                \
+      ::draconis::core::plugin::RegisterStaticPlugin(                                   \
+        #PluginClass,                                                                   \
+        { ::draconis::plugins::Create_##PluginClass,                                    \
+          ::draconis::plugins::Destroy_##PluginClass }                                  \
+      );                                                                                \
     }
 
 #else
