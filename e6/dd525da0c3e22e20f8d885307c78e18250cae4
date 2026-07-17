@@ -1,0 +1,145 @@
+core/include/Drac++/Utils/CacheManager.hpp
+  s_4ff3ebd35d351e::t_beb7522c654fb3 398,406-411
+  s_4ff3ebd35d351e::t_2b9b69f6c43886 126,129-148,151-153,155-156,158-160,162-167,169-171,173-188,190-196,198-200,205,207-210,212-214,216-217,219,221-225,227-229,232,234-236
+  s_4ff3ebd35d351e::t_7646a6cb941d26 13,119,121-123,245-247
+  s_4ff3ebd35d351e::t_2514f988187873 266,282,289-290
+  s_4ff3ebd35d351e::t_d39beafb82e2fb 6,9
+  s_4ff3ebd35d351e::t_d2436c206bd69b 93,237,302-304,308-325,328,331-341,343,345-395,399-405,412-419,424-429,431-432,434-462,464-468,471,474
+  s_4ff3ebd35d351e::t_901963308b3493 4,11-12,15-20,70,91-92,109,111-116
+  s_4ff3ebd35d351e::t_eef787c4fe3059 233
+  s_4ff3ebd35d351e::t_142ce88950546c 263,286-287
+  s_4ff3ebd35d351e::t_22ed4cb8688cdd 7,189,215,301,326-327,329-330,342,344,397,420-423
+  s_4ff3ebd35d351e::t_7b3076fe4c171e 3,108,110,117-118,149,300
+  s_4ff3ebd35d351e::t_c9fc0c9c8a16b7 14,94,396
+core/include/Drac++/Utils/ArgumentParser.hpp
+  s_4ff3ebd35d351e::t_ded5a93bb412a5 582,657,673,689
+justfile
+  s_4ff3ebd35d351e::t_2d9462935cd693 51
+  s_4ff3ebd35d351e::t_3a364e4b92e74e 15-17
+vcpkg.json
+  s_4ff3ebd35d351e::t_ab9c79c4b3e339 9
+core/include/Drac++/Core/PluginManager.hpp
+  s_4ff3ebd35d351e::t_2daa4f11c829b8 134-139
+  s_4ff3ebd35d351e::t_a49d3089d68a48 38,132,144-145,149,231
+tools/clang_format.py
+  s_4ff3ebd35d351e::t_615da0b0cf6a3a 1-87
+meson.options
+  s_a95a2e839ce8f4::t_524e40a555aea8 7
+core/src/Lib/Core/PluginManager.cpp
+  s_4ff3ebd35d351e::t_c18bf7411cf191 214,255-260,262,276,349-350,353,437-438,441,468,484,491-492,519,535,546-547
+  s_4ff3ebd35d351e::t_2daa4f11c829b8 15,189-192,269-273,317-320,380-386,414-431
+  s_4ff3ebd35d351e::t_a49d3089d68a48 242,497,511
+  s_4ff3ebd35d351e::t_6fd992b41dcb4f 432-433
+core/tests/meson.build
+  s_4ff3ebd35d351e::t_d1998c41adcfe4 56-64
+core/src/CLI/Core/SystemInfo.cpp
+  s_4ff3ebd35d351e::t_51a188a68de3fc 3-4,98-105,109,121,133-137
+  s_4ff3ebd35d351e::t_ac3ed3c8cef53b 237
+  s_4ff3ebd35d351e::t_a49d3089d68a48 240
+  s_4ff3ebd35d351e::t_bfbc01b57db5c5 68-72,75,77-81,107-108,110-120,122-132,140-141,145-146
+  s_4ff3ebd35d351e::t_8112c20717319f 247,252,254-256,259,262,268-271,273,275,277,279-281,284,288,290-303
+  s_4ff3ebd35d351e::t_c3bff46d0df8e7 76,248-251,258,260-261,263-264
+  s_4ff3ebd35d351e::t_f38b81ff012c0f 106,257
+nix/package.nix
+  s_4ff3ebd35d351e::t_2d9462935cd693 113
+core/src/CLI/Config/Config.cpp
+  s_4ff3ebd35d351e::t_2daa4f11c829b8 284,286,361,370,373-374,387-388,393-394,401-402,405-406,409-410,413,418,421,424
+windows-clang.ini
+  s_a95a2e839ce8f4::t_d170fad2486828 8
+core/src/CLI/UI/UI.cpp
+  s_4ff3ebd35d351e::t_a814b3834852fd 792-807,813,816,822,1000-1013,1015-1017
+  s_4ff3ebd35d351e::t_332cc7c4e675e2 611-612,614-615,617-618,1056-1057,1088-1089
+c-api/src/draconis_c.cpp
+  s_4ff3ebd35d351e::t_838d2b1e51f414 44,141,793-794
+core/src/CLI/Core/SystemInfo.hpp
+  s_4ff3ebd35d351e::t_bfbc01b57db5c5 130-134
+core/include/Drac++/Core/Plugin.hpp
+  s_4ff3ebd35d351e::t_9922a045eccd1f 441,443
+  s_4ff3ebd35d351e::t_421c05fcb5cf33 27,213,254,257-258,262,264,266,268,273,283,291-295
+  s_4ff3ebd35d351e::t_08dd23e9a61e0d 25,296-297,434-436,463-465,510-524
+core/src/CLI/main.cpp
+  s_4ff3ebd35d351e::t_e8f329ca0be2b1 291-295
+  s_4ff3ebd35d351e::t_7ff94dc0417860 216
+  s_4ff3ebd35d351e::t_5d4f6e4a626878 301-302
+  s_4ff3ebd35d351e::t_bfbc01b57db5c5 312
+  s_4ff3ebd35d351e::t_c29cf933082113 10-11,32,333-342,344-347
+  s_4ff3ebd35d351e::t_c3bff46d0df8e7 287-289
+  s_4ff3ebd35d351e::t_cc7e72492865cd 281,286,307
+core/src/CLI/CLI.cpp
+  s_4ff3ebd35d351e::t_cc7e72492865cd 18-19,34-35,40-46,98-106,108,110-114
+  s_4ff3ebd35d351e::t_f3b634141fe756 316-318,321-332,334-340
+  s_4ff3ebd35d351e::t_c3bff46d0df8e7 107,109
+  s_4ff3ebd35d351e::t_ac3ed3c8cef53b 359
+  s_4ff3ebd35d351e::t_014bd122f03888 253
+  s_4ff3ebd35d351e::t_fd99e2af17dae5 82,360-363
+  s_4ff3ebd35d351e::t_4bf14d9ff08204 115,364
+core/include/Drac++/Utils/Logging.hpp
+  s_4ff3ebd35d351e::t_d97984b0c0985b 639-686,742
+  s_4ff3ebd35d351e::t_0a15ecfccf5058 687,690-691,694-740,743
+  s_4ff3ebd35d351e::t_fe6f769b767e66 346,386-388,404,406,433,458,629-633,638,688-689,741,744-752,755-756,758-760,762-763,765-767,769-770,772-774,776-777,779-781,783-784,786-788
+core/src/Lib/Services/Packages.cpp
+  s_4ff3ebd35d351e::t_b3f6dbd1341f6b 31-39,60-62,76-77,81,84,88,113,159,196
+nix/musl.nix
+  s_4ff3ebd35d351e::t_2d9462935cd693 125
+core/src/CLI/CLI.hpp
+  s_4ff3ebd35d351e::t_cc7e72492865cd 37-38
+core/tests/test_performance_helpers.cpp
+  s_4ff3ebd35d351e::t_bbdc343183767a 1-2,4-7,9-10,17-20,22,87-89,99-101,106-119,123-159,162-181,183-192,195-202,204-215,217-235,239-249,252-263
+  s_4ff3ebd35d351e::t_253ce402af3e7f 266,268-275,279-280,283-291,295-298,300-306
+  s_4ff3ebd35d351e::t_4020c3345f0229 267,276-278,281-282,292-294,299
+  s_4ff3ebd35d351e::t_1bc7e650eadbeb 8,13,62-86,90-98
+  s_4ff3ebd35d351e::t_d1998c41adcfe4 11-12,14-16,23-61,264-265,307-308
+  s_4ff3ebd35d351e::t_530291e0de977d 3,21,102-105,120-122,160-161,182,193-194,203,216,236-238,250-251
+core/meson.build
+  s_a95a2e839ce8f4::t_54ca45645de8a5 165-173
+  s_a95a2e839ce8f4::t_f5fccdb0cdd191 244
+core/src/Lib/OS/Windows.cpp
+  s_a95a2e839ce8f4::t_a1af50152d8975 347,353,355,365,370-371
+  s_c1686d7159c87e::t_067bd1c4e77542 162,188-191
+bindings/lua/src/bindings.cpp
+  s_4ff3ebd35d351e::t_63be025cf26d31 370
+bindings/python/src/bindings.cpp
+  s_4ff3ebd35d351e::t_d92d2fb87687e3 1-3,54,182,186,190,194,198,202,206,210,214,218,222,226,235,239,248,252,261,265,269,276,281,284-288,298,301,303,305,307,309
+c-api/include/draconis_c.h
+  s_4ff3ebd35d351e::t_c7fbaf8c4a6e28 361,365,370,376-381,401,407,420,422
+core/include/Drac++/Core/StaticPlugins.hpp
+  s_4ff3ebd35d351e::t_712beaaedc06a8 23-24,56
+core/src/Lib/OS/BSD.cpp
+  s_4ff3ebd35d351e::t_49ce510071691d 121,183,219
+core/src/Lib/OS/Linux.cpp
+  s_4ff3ebd35d351e::t_0ebd2fec40b414 278,539,666,1137-1140,1168
+core/src/Lib/OS/Unix.hpp
+  s_4ff3ebd35d351e::t_42cd3bcb8530f6 250-256,271-277
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "e6dd525da0c3e22e20f8d885307c78e18250cae4",
+  "prompts": {},
+  "sessions": {
+    "s_4ff3ebd35d351e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f53b2-98ca-78e2-8396-e393c929b11a",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Mars <mars@pupbrained.dev>"
+    },
+    "s_a95a2e839ce8f4": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f34ba-421a-7f11-bf1e-2278ecc84036",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Mars <mars@pupbrained.dev>"
+    },
+    "s_c1686d7159c87e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6d8e-560a-73c1-a5d2-a9e50c726ce7",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Mars <mars@pupbrained.dev>"
+    }
+  }
+}
