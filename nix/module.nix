@@ -41,8 +41,17 @@ with lib; let
     then "services::packages::Manager::None"
     else builtins.concatStringsSep " | " selectedManagers;
 
+  logoPath =
+    if cfg.logo.path == null
+    then null
+    else
+      builtins.path {
+        path = cfg.logo.path;
+        name = "draconisplusplus-logo";
+      };
+
   logoAttrs = filterAttrs (_: v: v != null) {
-    path = cfg.logo.path;
+    path = logoPath;
     protocol = cfg.logo.protocol;
     width = cfg.logo.width;
     height = cfg.logo.height;
@@ -51,7 +60,7 @@ with lib; let
   # Generate C++ logo config for precompiled builds
   logoConfigCode = ''
     inline constexpr PrecompiledLogo DRAC_LOGO = {
-      ${lib.optionalString (cfg.logo.path != null) ".path = \"${escapeCppString cfg.logo.path}\","}
+      ${lib.optionalString (logoPath != null) ".path = \"${escapeCppString logoPath}\","}
       ${lib.optionalString (cfg.logo.protocol != null) ".protocol = \"${cfg.logo.protocol}\","}
       ${lib.optionalString (cfg.logo.width != null) ".width = ${toString cfg.logo.width},"}
       ${lib.optionalString (cfg.logo.height != null) ".height = ${toString cfg.logo.height},"}
