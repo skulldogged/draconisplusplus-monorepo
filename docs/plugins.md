@@ -84,6 +84,24 @@ The manifest is the source of truth for how a plugin is built:
 For a dynamic build, a plugin with a missing dependency is skipped with a
 warning. A missing dependency requested by a static build is an error.
 
+### Nix plugin package metadata
+
+Plugin-root derivations should expose the following passthru metadata:
+
+```nix
+passthru = {
+  pluginNames = ["my_stats"];
+  pluginBuildInputsByName.my_stats = [pkgs.someDependency];
+  pluginBuildInputs = [pkgs.someDependency];
+};
+```
+
+The Home Manager module uses `pluginBuildInputsByName` to add dependencies only
+for plugins selected by `staticPlugins`. `pluginBuildInputs` is retained as a
+compatibility fallback for older plugin packages. Set `pluginMode = "static"`
+to compile every plugin contained in the supplied roots without repeating the
+names in `staticPlugins`.
+
 ## Implement a plugin
 
 Plugins implement an interface from `<Drac++/Core/Plugin.hpp>`:

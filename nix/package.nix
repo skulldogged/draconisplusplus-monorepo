@@ -4,7 +4,6 @@
   self,
   ...
 }: let
-
   llvmPackages = pkgs.llvmPackages_20;
 
   stdenv = with pkgs;
@@ -32,7 +31,6 @@
       boostUt
     ]
     ++ (with pkgs.pkgsStatic; [
-      curl
       (magic-enum.overrideAttrs (old: {
         doCheck = false;
         cmakeFlags = (old.cmakeFlags or []) ++ ["-DMAGIC_ENUM_OPT_BUILD_TESTS=OFF"];
@@ -43,47 +41,26 @@
     ++ darwinPkgs
     ++ linuxPkgs;
 
-  darwinPkgs = lib.optionals stdenv.isDarwin (with pkgs.pkgsStatic; [
-    libiconv
-    apple-sdk_15
-  ] ++ [
-    pkgs.darwin.sigtool
-  ]);
+  darwinPkgs = lib.optionals stdenv.isDarwin (with pkgs.pkgsStatic;
+    [
+      libiconv
+      apple-sdk_15
+    ]
+    ++ [
+      pkgs.darwin.sigtool
+    ]);
 
   linuxPkgs = lib.optionals stdenv.isLinux (with pkgs;
     [
       valgrind
     ]
     ++ (with pkgsStatic; [
-      (dbus.overrideAttrs (old: let
-        filterAuditApparmor = builtins.filter (p:
-          let name = p.pname or ""; in
-          name != "audit" && name != "libapparmor"
-        );
-      in {
-        buildInputs = filterAuditApparmor (old.buildInputs or []);
-        propagatedBuildInputs = filterAuditApparmor (old.propagatedBuildInputs or []);
-        mesonFlags = builtins.filter (f:
-          !(lib.hasPrefix "-Dlibaudit" f) && !(lib.hasPrefix "-Dapparmor" f)
-        ) (old.mesonFlags or []) ++ [
-          "-Dlibaudit=disabled"
-          "-Dapparmor=disabled"
-        ];
-        configureFlags = builtins.filter (f:
-          !(lib.hasPrefix "--enable-apparmor" f) && !(lib.hasPrefix "--enable-libaudit" f)
-        ) (old.configureFlags or []) ++ [
-          "--disable-apparmor"
-          "--disable-libaudit"
-        ];
-      }))
       pugixml
       xorg.libxcb
       wayland
     ]));
 
-  mkDraconisPackage = lib.makeOverridable ({
-    native,
-  }:
+  mkDraconisPackage = lib.makeOverridable ({native}:
     stdenv.mkDerivation {
       name =
         "draconis++"

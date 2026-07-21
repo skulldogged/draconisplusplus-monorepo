@@ -41,13 +41,12 @@ with lib; let
     then "services::packages::Manager::None"
     else builtins.concatStringsSep " | " selectedManagers;
 
-  logoAttrs =
-    filterAttrs (_: v: v != null) {
-      path = cfg.logo.path;
-      protocol = cfg.logo.protocol;
-      width = cfg.logo.width;
-      height = cfg.logo.height;
-    };
+  logoAttrs = filterAttrs (_: v: v != null) {
+    path = cfg.logo.path;
+    protocol = cfg.logo.protocol;
+    width = cfg.logo.width;
+    height = cfg.logo.height;
+  };
 
   # Generate C++ logo config for precompiled builds
   logoConfigCode = ''
@@ -101,54 +100,64 @@ with lib; let
 
   sanitizeLayoutName = name: lib.toUpper (lib.strings.replaceStrings [" " "-" "."] ["_" "_" "_"] name);
 
-  escapeCppString =
-    s:
+  escapeCppString = s:
     builtins.replaceStrings
     ["\\" "\""]
-    ["\\\\"
-      "\\\""]
+    [
+      "\\\\"
+      "\\\""
+    ]
     (toString s);
 
-  layoutRowToHpp =
-    row:
-    let
-      autoWrapVal = if (row.autoWrap or false) then "true" else "false";
-      labelVal =
-        let label = row.label or null;
-        in if label == null then "nullptr" else "\"${escapeCppString label}\"";
-      iconVal =
-        let icon = row.icon or null;
-        in if icon == null then "nullptr" else "\"${escapeCppString icon}\"";
-      colorVal =
-        let color = row.color or null;
-        in if color == null then "LogColor::White" else "LogColor::${color}";
-      keyVal = "\"${escapeCppString row.key}\"";
-    in "Row(${keyVal}, ${autoWrapVal}, ${colorVal}, ${labelVal}, ${iconVal})";
+  layoutRowToHpp = row: let
+    autoWrapVal =
+      if (row.autoWrap or false)
+      then "true"
+      else "false";
+    labelVal = let
+      label = row.label or null;
+    in
+      if label == null
+      then "nullptr"
+      else "\"${escapeCppString label}\"";
+    iconVal = let
+      icon = row.icon or null;
+    in
+      if icon == null
+      then "nullptr"
+      else "\"${escapeCppString icon}\"";
+    colorVal = let
+      color = row.color or null;
+    in
+      if color == null
+      then "LogColor::White"
+      else "LogColor::${color}";
+    keyVal = "\"${escapeCppString row.key}\"";
+  in "Row(${keyVal}, ${autoWrapVal}, ${colorVal}, ${labelVal}, ${iconVal})";
 
   layoutGroupHppEntries =
     map (
-      group:
-        let
-          rows      = group.rows or [];
-          arrayName = "DRAC_UI_${sanitizeLayoutName group.name}_ROWS";
-        in {
-          inherit arrayName;
-          name = group.name;
-          rowsCode = ''
-            inline constexpr std::array<PrecompiledLayoutRow, ${toString (builtins.length rows)}> ${arrayName} = {
-              ${builtins.concatStringsSep ",\n              " (map (row: layoutRowToHpp row) rows)}
-            };
-          '';
-        }
+      group: let
+        rows = group.rows or [];
+        arrayName = "DRAC_UI_${sanitizeLayoutName group.name}_ROWS";
+      in {
+        inherit arrayName;
+        name = group.name;
+        rowsCode = ''
+          inline constexpr std::array<PrecompiledLayoutRow, ${toString (builtins.length rows)}> ${arrayName} = {
+            ${builtins.concatStringsSep ",\n              " (map (row: layoutRowToHpp row) rows)}
+          };
+        '';
+      }
     )
     cfg.layout;
 
   layoutGroupsHppCode = builtins.concatStringsSep "\n\n        " (map (g: g.rowsCode) layoutGroupHppEntries);
 
   layoutArrayHppCode = ''
-        inline constexpr std::array<PrecompiledLayoutGroup, ${toString (builtins.length layoutGroupHppEntries)}> DRAC_UI_LAYOUT = {
-          ${builtins.concatStringsSep "\n          " (map (g: ''Group("${g.name}", ${g.arrayName}),'') layoutGroupHppEntries)}
-        };
+    inline constexpr std::array<PrecompiledLayoutGroup, ${toString (builtins.length layoutGroupHppEntries)}> DRAC_UI_LAYOUT = {
+      ${builtins.concatStringsSep "\n          " (map (g: ''Group("${g.name}", ${g.arrayName}),'') layoutGroupHppEntries)}
+    };
   '';
 
   layoutToml =
@@ -171,10 +180,10 @@ with lib; let
     )
     cfg.layout;
 
-  pluginRoots = cfg.pluginDirs ++ cfg.pluginPackages;
-  pluginPackageBuildInputs =
-    lib.unique
-    (lib.concatMap (pluginPackage: pluginPackage.passthru.pluginBuildInputs or []) cfg.pluginPackages);
+  effectiveStaticPlugins =
+    if cfg.staticPlugins != []
+    then cfg.staticPlugins
+    else lib.optional (cfg.pluginMode == "static") "all";
 
   configHpp =
     pkgs.writeText "config.hpp"
@@ -208,29 +217,43 @@ with lib; let
       #endif
     '';
 
-  draconisWithOverrides = cfg.package.overrideAttrs (oldAttrs: {
-    postPatch =
-      (oldAttrs.postPatch or "")
-      + lib.optionalString (cfg.configFormat == "hpp") ''
-        cp ${configHpp} ./config.hpp
-      '';
+  withPlugins = import ./with-plugins.nix {inherit lib;};
 
-    buildInputs = (oldAttrs.buildInputs or []) ++ pluginPackageBuildInputs;
-
-    mesonFlags =
-      (oldAttrs.mesonFlags or [])
-      ++ [
-        "-Dprecompiled_config=${if cfg.configFormat == "hpp" then "true" else "false"}"
-        "-Dcaching=${if cfg.enableCaching then "enabled" else "disabled"}"
-        "-Dpackagecount=${if cfg.enablePackageCount then "enabled" else "disabled"}"
-        "-Dplugins=${if cfg.enablePlugins then "enabled" else "disabled"}"
-        "-Dpugixml=${if cfg.usePugixml then "enabled" else "disabled"}"
-      ]
-      ++ lib.optional (cfg.staticPlugins != []) "-Dstatic_plugins=${lib.concatStringsSep "," cfg.staticPlugins}"
-      ++ lib.optional (pluginRoots != []) "-Dplugin_dirs=${lib.concatStringsSep "," (map toString pluginRoots)}";
-  });
-
-  draconisPkg = draconisWithOverrides;
+  draconisPkg = withPlugins {
+    package = cfg.package;
+    inherit (cfg) pluginDirs pluginPackages;
+    staticPlugins = effectiveStaticPlugins;
+    postPatch = lib.optionalString (cfg.configFormat == "hpp") ''
+      cp ${configHpp} ./config.hpp
+    '';
+    mesonFlags = [
+      "-Dprecompiled_config=${
+        if cfg.configFormat == "hpp"
+        then "true"
+        else "false"
+      }"
+      "-Dcaching=${
+        if cfg.enableCaching
+        then "enabled"
+        else "disabled"
+      }"
+      "-Dpackagecount=${
+        if cfg.enablePackageCount
+        then "enabled"
+        else "disabled"
+      }"
+      "-Dplugins=${
+        if cfg.enablePlugins
+        then "enabled"
+        else "disabled"
+      }"
+      "-Dpugixml=${
+        if cfg.usePugixml
+        then "enabled"
+        else "disabled"
+      }"
+    ];
+  };
 in {
   options.programs.draconisplusplus = {
     enable = mkEnableOption "draconis++";
@@ -342,6 +365,17 @@ in {
         discovered plugin. Names are validated by the build.
       '';
       example = literalExpression ''["weather" "now_playing"]'';
+    };
+
+    pluginMode = mkOption {
+      type = types.enum ["dynamic" "static"];
+      default = "dynamic";
+      description = ''
+        How packaged plugins are built when staticPlugins is empty. In static
+        mode, every plugin contained in pluginDirs and pluginPackages is
+        compiled into Draconis++. An explicit staticPlugins list takes
+        precedence for backwards compatibility.
+      '';
     };
 
     pluginDirs = mkOption {
@@ -471,28 +505,27 @@ in {
       DRAC_PLUGIN_PATH = "${draconisPkg}/lib/draconis++/plugins";
     };
 
-    xdg.configFile =
-      lib.optionalAttrs (cfg.configFormat == "toml") {
-        "draconis++/config.toml" = {
-          source = tomlFormat.generate "config.toml" (
-            {
-              general = {
-                name     = cfg.username;
-                language = cfg.language;
-              };
-              packages.enabled = cfg.packageManagers;
-              plugins =
-                {
-                  enabled   = cfg.enablePlugins;
-                  auto_load = cfg.pluginAutoLoad;
-                }
-                // cfg.pluginConfigs;
-              ui = {layout = layoutToml;};
-            }
-            // lib.optionalAttrs (logoAttrs != {}) {logo = logoAttrs;}
-          );
-        };
+    xdg.configFile = lib.optionalAttrs (cfg.configFormat == "toml") {
+      "draconis++/config.toml" = {
+        source = tomlFormat.generate "config.toml" (
+          {
+            general = {
+              name = cfg.username;
+              language = cfg.language;
+            };
+            packages.enabled = cfg.packageManagers;
+            plugins =
+              {
+                enabled = cfg.enablePlugins;
+                auto_load = cfg.pluginAutoLoad;
+              }
+              // cfg.pluginConfigs;
+            ui = {layout = layoutToml;};
+          }
+          // lib.optionalAttrs (logoAttrs != {}) {logo = logoAttrs;}
+        );
       };
+    };
 
     assertions = [
       {
@@ -513,5 +546,4 @@ in {
       }
     ];
   };
-
 }

@@ -15,7 +15,6 @@
     ...
   }: let
     inherit (nixpkgs) lib;
-
   in
     {
       homeModules.default = import ./nix/module.nix {inherit self;};
@@ -75,36 +74,46 @@
           ++ darwinPkgs
           ++ linuxPkgs;
 
-        darwinPkgs = lib.optionals stdenv.isDarwin (with pkgs.pkgsStatic; [
-          libiconv
-          apple-sdk_15
-        ] ++ [
-          pkgs.darwin.sigtool
-        ]);
+        darwinPkgs = lib.optionals stdenv.isDarwin (with pkgs.pkgsStatic;
+          [
+            libiconv
+            apple-sdk_15
+          ]
+          ++ [
+            pkgs.darwin.sigtool
+          ]);
 
         linuxPkgs = lib.optionals stdenv.isLinux (with pkgs;
           [valgrind]
           ++ (with pkgsStatic; [
             (dbus.overrideAttrs (old: let
-              filterAuditApparmor = builtins.filter (p:
-                let name = p.pname or ""; in
-                name != "audit" && name != "libapparmor"
+              filterAuditApparmor = builtins.filter (
+                p: let
+                  name = p.pname or "";
+                in
+                  name != "audit" && name != "libapparmor"
               );
             in {
               buildInputs = filterAuditApparmor (old.buildInputs or []);
               propagatedBuildInputs = filterAuditApparmor (old.propagatedBuildInputs or []);
-              mesonFlags = builtins.filter (f:
-                !(lib.hasPrefix "-Dlibaudit" f) && !(lib.hasPrefix "-Dapparmor" f)
-              ) (old.mesonFlags or []) ++ [
-                "-Dlibaudit=disabled"
-                "-Dapparmor=disabled"
-              ];
-              configureFlags = builtins.filter (f:
-                !(lib.hasPrefix "--enable-apparmor" f) && !(lib.hasPrefix "--enable-libaudit" f)
-              ) (old.configureFlags or []) ++ [
-                "--disable-apparmor"
-                "--disable-libaudit"
-              ];
+              mesonFlags =
+                builtins.filter (
+                  f:
+                    !(lib.hasPrefix "-Dlibaudit" f) && !(lib.hasPrefix "-Dapparmor" f)
+                ) (old.mesonFlags or [])
+                ++ [
+                  "-Dlibaudit=disabled"
+                  "-Dapparmor=disabled"
+                ];
+              configureFlags =
+                builtins.filter (
+                  f:
+                    !(lib.hasPrefix "--enable-apparmor" f) && !(lib.hasPrefix "--enable-libaudit" f)
+                ) (old.configureFlags or [])
+                ++ [
+                  "--disable-apparmor"
+                  "--disable-libaudit"
+                ];
             }))
             pugixml
             xorg.libxcb
@@ -112,9 +121,11 @@
           ]));
 
         draconisPkgs = import ./nix {inherit nixpkgs self system lib;};
+        withPlugins = import ./nix/with-plugins.nix {inherit lib;};
       in {
         packages = draconisPkgs;
         checks = draconisPkgs;
+        lib = {inherit withPlugins;};
 
         devShells.default = pkgs.mkShell.override {inherit stdenv;} {
           packages =
@@ -135,13 +146,13 @@
               dotnet-sdk_8
 
               (writeScriptBin "build" "meson compile -C build")
-               (writeScriptBin "clean" (
-                 "meson setup build --wipe"
-                 + " -Dprecompiled_config=true"
-                 + " -Dcaching=enabled"
-                 + " -Dpackagecount=enabled"
-                 + lib.optionalString pkgs.stdenv.isLinux " -Duse_linked_pci_ids=true -Dxcb=enabled -Dwayland=enabled -Dpugixml=enabled"
-               ))
+              (writeScriptBin "clean" (
+                "meson setup build --wipe"
+                + " -Dprecompiled_config=true"
+                + " -Dcaching=enabled"
+                + " -Dpackagecount=enabled"
+                + lib.optionalString pkgs.stdenv.isLinux " -Duse_linked_pci_ids=true -Dxcb=enabled -Dwayland=enabled -Dpugixml=enabled"
+              ))
               (writeScriptBin "run" "meson compile -C build && build/core/src/CLI/draconis++")
             ])
             ++ devShellDeps;
@@ -160,10 +171,10 @@
               export NIX_OBJCXXFLAGS_COMPILE="-isysroot $SDKROOT -mmacosx-version-min=14.0"
             ''
             + lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
-               cp ${pkgs.pciutils}/share/pci.ids pci.ids
-               chmod +w pci.ids
-               ld -r -b binary -o pci_ids.o pci.ids
-               rm pci.ids
+              cp ${pkgs.pciutils}/share/pci.ids pci.ids
+              chmod +w pci.ids
+              ld -r -b binary -o pci_ids.o pci.ids
+              rm pci.ids
             '';
         };
 
