@@ -85,9 +85,9 @@
     openssl
     sqlite
     wayland
-    xorg.libXau
-    xorg.libXdmcp
-    xorg.libxcb
+    libxau
+    libxdmcp
+    libxcb
     boostUt
 
     (mkOverridden "cmake" pugixml)

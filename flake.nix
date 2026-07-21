@@ -29,7 +29,7 @@
 
         stdenv = with pkgs;
           (
-            if hostPlatform.isLinux
+            if pkgs.stdenv.hostPlatform.isLinux
             then stdenvAdapters.useMoldLinker
             else lib.id
           )
@@ -116,7 +116,7 @@
                 ];
             }))
             pugixml
-            xorg.libxcb
+            libxcb
             wayland
           ]));
 

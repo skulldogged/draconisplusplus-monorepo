@@ -9,7 +9,7 @@ with lib; let
 
   tomlFormat = pkgs.formats.toml {};
 
-  defaultPackage = self.packages.${pkgs.system}.default;
+  defaultPackage = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
 
   stdenvHost = pkgs.stdenv;
   isLinux = stdenvHost.isLinux or false;
@@ -400,7 +400,7 @@ in {
         passthru.pluginBuildInputs; those inputs are added to the Draconis++
         build environment so plugin manifest dependencies can resolve.
       '';
-      example = literalExpression ''[inputs.draconisplusplus-plugins.packages.''${pkgs.system}.all]'';
+      example = literalExpression ''[inputs.draconisplusplus-plugins.packages.''${pkgs.stdenv.hostPlatform.system}.all]'';
     };
 
     pluginAutoLoad = mkOption {
