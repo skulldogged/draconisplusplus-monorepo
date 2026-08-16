@@ -37,7 +37,6 @@ endif
 # ------------------- #
 #  Executable Target  #
 # ------------------- #
-# Use draconis_dep_whole to ensure static plugin self-registration isn't stripped
 dracpp_exe = executable(
   'draconis++',
   main_app_sources,

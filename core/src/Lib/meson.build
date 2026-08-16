@@ -146,13 +146,7 @@ draconis_dep = declare_dependency(
   compile_args : static_plugin_cpp_args,
 )
 
-# Dependency with link_whole for the main CLI (ensures static plugin self-registration isn't stripped)
-if static_plugin_list.length() > 0
-  draconis_dep_whole = declare_dependency(
-    link_whole : libdrac,
-    dependencies : [includes_dep] + lib_deps,
-    compile_args : static_plugin_cpp_args,
-  )
-else
-  draconis_dep_whole = draconis_dep
-endif
+# Static plugins register through DracInitStaticPlugins() -> DracRegisterPlugin_*.
+# Fat LTO objects keep those symbols visible, so we do not need --whole-archive
+# (which breaks clang LTO + mold with undefined __cxx_global_var_init).
+draconis_dep_whole = draconis_dep

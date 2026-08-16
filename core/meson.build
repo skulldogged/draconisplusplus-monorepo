@@ -116,6 +116,14 @@ else
   cpp_args += '-std=c++26'
 endif
 
+# LTO bitcode archives have no usable symbol index, so consumers needed
+# --whole-archive to see static plugin registration. Fat LTO objects keep
+# both IR and a real ELF symbol table, so normal archive extraction works
+# and clang+mold no longer fails with undefined __cxx_global_var_init.
+if get_option('b_lto')
+  cpp_args += cpp.get_supported_arguments('-ffat-lto-objects')
+endif
+
 # Check compiler arguments in groups
 cpp_args += cpp.get_supported_arguments(
   [
