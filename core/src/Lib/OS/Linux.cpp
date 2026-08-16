@@ -62,6 +62,12 @@ extern "C" auto issetugid() -> usize { return 0; } // NOLINT(readability-identif
 #endif
 // clang-format on
 
+#if DRAC_USE_LINKED_PCI_IDS
+namespace draconis::os::pci_ids {
+  auto Data() -> std::string_view;
+}
+#endif
+
 namespace {
   template <std::integral T>
   constexpr auto TryParse(StringView sview) -> Option<T> {
@@ -129,15 +135,8 @@ namespace {
   }
 
   #if DRAC_USE_LINKED_PCI_IDS
-  extern "C" {
-    extern const char _binary_pci_ids_start[];
-    extern const char _binary_pci_ids_end[];
-  }
-
   auto LookupPciNames(const StringView vendorId, const StringView deviceId) -> Result<Pair<String, String>> {
-    const usize pciIdsLen = _binary_pci_ids_end - _binary_pci_ids_start;
-
-    return LookupPciNamesFromBuffer(StringView(_binary_pci_ids_start, pciIdsLen), vendorId, deviceId);
+    return LookupPciNamesFromBuffer(draconis::os::pci_ids::Data(), vendorId, deviceId);
   }
   #else
   auto FindPciIDsPath() -> fs::path {

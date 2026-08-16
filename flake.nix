@@ -151,7 +151,7 @@
                 + " -Dprecompiled_config=true"
                 + " -Dcaching=enabled"
                 + " -Dpackagecount=enabled"
-                + lib.optionalString pkgs.stdenv.isLinux " -Duse_linked_pci_ids=true -Dxcb=enabled -Dwayland=enabled -Dpugixml=enabled"
+                + lib.optionalString pkgs.stdenv.isLinux " -Duse_linked_pci_ids=true -Dpci_ids_path=${pkgs.pciutils}/share/pci.ids -Dxcb=enabled -Dwayland=enabled -Dpugixml=enabled"
               ))
               (writeScriptBin "run" "meson compile -C build && build/core/src/CLI/draconis++")
             ])
@@ -170,12 +170,7 @@
               export NIX_OBJCFLAGS_COMPILE="-isysroot $SDKROOT -mmacosx-version-min=14.0"
               export NIX_OBJCXXFLAGS_COMPILE="-isysroot $SDKROOT -mmacosx-version-min=14.0"
             ''
-            + lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
-              cp ${pkgs.pciutils}/share/pci.ids pci.ids
-              chmod +w pci.ids
-              ld -r -b binary -o pci_ids.o pci.ids
-              rm pci.ids
-            '';
+            ;
         };
 
         formatter = treefmt-nix.lib.mkWrapper pkgs {

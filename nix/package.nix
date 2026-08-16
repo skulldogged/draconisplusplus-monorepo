@@ -89,22 +89,16 @@
         "-Dbuild_examples=false"
         "-Db_lto=true"
         (lib.optionalString stdenv.isLinux "-Duse_linked_pci_ids=true")
+        (lib.optionalString stdenv.isLinux "-Dpci_ids_path=${pkgs.pciutils}/share/pci.ids")
       ];
 
       configurePhase = ''
         meson setup build --buildtype=release $mesonFlags
       '';
 
-      buildPhase =
-        lib.optionalString stdenv.isLinux ''
-          cp ${pkgs.pciutils}/share/pci.ids pci.ids
-          chmod +w pci.ids
-          ld -r -b binary -o pci_ids.o pci.ids
-          rm pci.ids
-        ''
-        + ''
-          meson compile -C build
-        '';
+      buildPhase = ''
+        meson compile -C build
+      '';
 
       checkPhase = ''
         meson test -C build --print-errorlogs

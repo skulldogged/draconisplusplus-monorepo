@@ -124,6 +124,7 @@
         "-Dbuild_examples=false"
         "-Db_lto=true"
         "-Duse_linked_pci_ids=true"
+        "-Dpci_ids_path=${pkgs.pciutils}/share/pci.ids"
         # Fully static binary: dlopen is unavailable, so disable the plugin
         # system. For plugins in a musl build, override with
         # -Dplugins=enabled -Dstatic_plugins=... instead.
@@ -137,11 +138,6 @@
       '';
 
       buildPhase = ''
-        cp ${pkgs.pciutils}/share/pci.ids pci.ids
-        chmod +w pci.ids
-        ld -r -b binary -o pci_ids.o pci.ids
-        rm pci.ids
-
         meson compile -C build
       '';
 

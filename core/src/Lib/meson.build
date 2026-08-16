@@ -89,11 +89,42 @@ if feature_states['plugins']
   )
 endif
 
-# Link arguments for pci_ids (only applied at final executable level, not on dependencies)
-pci_ids_link_args = []
+# Embed pci.ids as a C++ TU so clang LTO + mold can see it as bitcode.
+# The old `ld -r -b binary` pci_ids.o is a non-LTO ELF object; mixing that
+# into an LTO link makes mold fail with undefined __cxx_global_var_init.
+if get_option('use_linked_pci_ids')
+  pci_ids_path = get_option('pci_ids_path')
+  if pci_ids_path == ''
+    foreach candidate : [
+      meson.project_source_root() / 'pci.ids',
+      '/usr/share/hwdata/pci.ids',
+      '/usr/share/misc/pci.ids',
+      '/usr/share/pci.ids',
+    ]
+      if fs.is_file(candidate)
+        pci_ids_path = candidate
+        break
+      endif
+    endforeach
+  endif
 
-if get_option('use_linked_pci_ids') == true
-  pci_ids_link_args += meson.project_source_root() / 'pci_ids.o'
+  if pci_ids_path == ''
+    error('use_linked_pci_ids requires pci.ids. Pass -Dpci_ids_path=/path/to/pci.ids')
+  endif
+
+  if not fs.is_absolute(pci_ids_path)
+    pci_ids_path = meson.project_source_root() / pci_ids_path
+  endif
+
+  if not fs.is_file(pci_ids_path)
+    error('pci.ids not found at "@0@"'.format(pci_ids_path))
+  endif
+
+  lib_all_sources += configure_file(
+    input: 'OS/PciIdsEmbed.cpp.in',
+    output: 'PciIdsEmbed.cpp',
+    configuration: {'PCI_IDS_PATH': pci_ids_path.replace('\\', '/')},
+  )
 endif
 
 # ----------------- #
@@ -109,8 +140,6 @@ libdrac = static_library(
 
 # Standard dependency (for most targets)
 # Includes lib_deps so consumers get all transitive dependencies automatically
-# NOTE: pci_ids.o is NOT included here to avoid duplication through dependency chains.
-# Executables that need it should add pci_ids_link_args to their own link_args.
 draconis_dep = declare_dependency(
   link_with : libdrac,
   dependencies : [includes_dep] + lib_deps,

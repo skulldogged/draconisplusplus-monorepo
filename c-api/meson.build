@@ -26,7 +26,6 @@ if get_option('build_examples')
   demo_c_exe = executable('demo_c',
     'examples/demo.c',
     dependencies: draconis_c_dep,
-    link_args: pci_ids_link_args,
     link_language: 'cpp',
     override_options: ['b_asneeded=false'],
     install: false,

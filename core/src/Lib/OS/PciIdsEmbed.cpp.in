@@ -1,0 +1,17 @@
+#if defined(__clang__)
+#pragma clang diagnostic ignored "-Wc23-extensions"
+#endif
+
+#include <string_view>
+
+namespace {
+constexpr unsigned char kLinkedPciIds[] = {
+#embed "@PCI_IDS_PATH@"
+};
+} // namespace
+
+namespace draconis::os::pci_ids {
+auto Data() -> std::string_view {
+  return {reinterpret_cast<const char*>(kLinkedPciIds), sizeof(kLinkedPciIds)};
+}
+} // namespace draconis::os::pci_ids

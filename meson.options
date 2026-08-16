@@ -6,7 +6,8 @@
 option('default_language', type: 'string', value: 'en', description: 'Default language code')
 option('caching', type: 'feature', value: 'enabled', description: 'Enable caching')
 option('packagecount', type: 'feature', value: 'enabled', description: 'Enable package counting')
-option('use_linked_pci_ids', type: 'boolean', value: false, description: 'Use linked pci.ids file')
+option('use_linked_pci_ids', type: 'boolean', value: false, description: 'Embed pci.ids into the binary instead of reading it at runtime')
+option('pci_ids_path', type: 'string', value: '', description: 'Path to pci.ids when use_linked_pci_ids is enabled (optional; common system paths are searched)')
 
 # Build options
 option('build_cli', type: 'boolean', value: true, description: 'Build the CLI application')
