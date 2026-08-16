@@ -19,18 +19,24 @@ draconis_c_dep = declare_dependency(
 
 install_headers('include/draconis_c.h', subdir: 'draconis')
 
-# Demo executable for testing
-demo_c_exe = executable('demo_c',
-  'examples/demo.c',
-  dependencies: draconis_c_dep,
-  link_args: pci_ids_link_args,
-  install: false,
-)
+if get_option('build_examples')
+  # demo.c is a C TU linked against LTO C++ archives. clang + mold inspect the
+  # C object before LTO when --as-needed is on, drop the C++ runtime, and fail
+  # with undefined __cxx_global_var_init. Link as C++ and keep the runtime.
+  demo_c_exe = executable('demo_c',
+    'examples/demo.c',
+    dependencies: draconis_c_dep,
+    link_args: pci_ids_link_args,
+    link_language: 'cpp',
+    override_options: ['b_asneeded=false'],
+    install: false,
+  )
 
-c_example = custom_target('c_example',
-  command: [demo_c_exe],
-  output: 'c_example.stamp',
-  console: true,
-  build_by_default: false,
-  depends: [demo_c_exe],
-)
+  custom_target('c_example',
+    command: [demo_c_exe],
+    output: 'c_example.stamp',
+    console: true,
+    build_by_default: false,
+    depends: [demo_c_exe],
+  )
+endif
