@@ -1,12 +1,13 @@
-#include <Drac++/Core/System.hpp>
-#include <Drac++/Services/Packages.hpp>
-
 #if DRAC_ENABLE_PLUGINS
+  #include <Drac++/Core/Plugin.hpp>
   #include <Drac++/Core/PluginManager.hpp>
 #endif
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <cstdlib>
+#include <format>
 #include <magic_enum/magic_enum.hpp>
 #include <typeinfo>
 
@@ -31,53 +32,66 @@ using namespace draconis::ui;
 using namespace draconis::cli;
 using draconis::utils::error::DracError;
 
-struct CliOptions {
-  // Modes
-  bool   doctorMode    = false;
-  bool   benchmarkMode = false;
-  bool   listPlugins   = false;
-  String pluginInfo;
+namespace {
+  auto GetVersionString() -> String {
+#if defined(DRAC_BUILD_DATE) && defined(DRAC_GIT_HASH)
+    return std::format("draconis++ {} ({}) [{}]", DRAC_VERSION, DRAC_BUILD_DATE, DRAC_GIT_HASH);
+#elifdef DRAC_BUILD_DATE
+    return std::format("draconis++ {} ({})", DRAC_VERSION, DRAC_BUILD_DATE);
+#else
+    return std::format("draconis++ {}", DRAC_VERSION);
+#endif
+  }
+  struct CliOptions {
+    // Modes
+    bool   doctorMode    = false;
+    bool   benchmarkMode = false;
+    bool   listPlugins   = false;
+    String pluginInfo;
 
-  // Cache control
-  bool clearCache     = false;
-  bool ignoreCacheRun = false;
+    // Cache control
+    bool clearCache     = false;
+    bool ignoreCacheRun = false;
 
-  // Output options
-  bool   noAscii = false;
-  String outputFormat;
-  String compactFormat;
+    // Output options
+    bool   noAscii = false;
+    String outputFormat;
+    String compactFormat;
 
-  // Localization
-  String language;
+    // Localization
+    String language;
 
-  // Logo options
-  String logoPath;
-  String logoProtocol;
-  u32    logoWidth  = 0;
-  u32    logoHeight = 0;
+    // Logo options
+    String logoPath;
+    String logoProtocol;
+    u32    logoWidth  = 0;
+    u32    logoHeight = 0;
 
-  // Misc
-  bool   showConfigPath = false;
-  String generateCompletions;
-};
+    // Misc
+    bool   showConfigPath = false;
+    String generateCompletions;
+  };
+} // namespace
 
 auto main(const i32 argc, CStr* argv[]) -> i32 try {
+  const Span<CStr*> arguments(argv, static_cast<usize>(argc));
+  if (arguments.size() == 2) {
+    const StringView versionArgument(arguments.last(1).front());
+    if (versionArgument == "-v" || versionArgument == "--version") {
+      Println(GetVersionString());
+      return EXIT_SUCCESS;
+    }
+  }
+
   CliOptions opts;
 
   {
     using draconis::utils::argparse::Argument;
     using draconis::utils::argparse::ArgumentParser;
+    using draconis::utils::argparse::ParseAction;
 
-    // Build enhanced version string with build date and git hash
-#if defined(DRAC_BUILD_DATE) && defined(DRAC_GIT_HASH)
-    String versionString = std::format("draconis++ {} ({}) [{}]", DRAC_VERSION, DRAC_BUILD_DATE, DRAC_GIT_HASH);
-#elif defined(DRAC_BUILD_DATE)
-    String versionString = std::format("draconis++ {} ({})", DRAC_VERSION, DRAC_BUILD_DATE);
-#else
-    String versionString = std::format("draconis++ {}", DRAC_VERSION);
-#endif
-
-    ArgumentParser parser(versionString);
+    ArgumentParser parser(GetVersionString());
+    parser.reserveArguments(20);
 
     parser
       .addArguments("-V", "--verbose")
@@ -191,10 +205,13 @@ auto main(const i32 argc, CStr* argv[]) -> i32 try {
       .defaultValue(String(""))
       .bindTo(opts.generateCompletions);
 
-    if (Result<> result = parser.parseInto({ argv, static_cast<usize>(argc) }); !result) {
-      error_at(result.error());
+    Result<ParseAction> parseResult = parser.parseInto({ argv, static_cast<usize>(argc) });
+    if (!parseResult) {
+      error_at(parseResult.error());
       return EXIT_FAILURE;
     }
+    if (*parseResult != ParseAction::Continue)
+      return EXIT_SUCCESS;
 
     SetRuntimeLogLevel(
       parser.get<bool>("-V") || parser.get<bool>("--verbose")
@@ -304,12 +321,12 @@ auto main(const i32 argc, CStr* argv[]) -> i32 try {
 
     // Handle benchmark mode (runs timing for each data source)
     if (opts.benchmarkMode) {
-      Vec<BenchmarkResult> results = RunBenchmark(cache, config, pluginInitializationMs);
+      const Vec<BenchmarkResult> results = RunBenchmark(cache, config, pluginInitializationMs);
       PrintBenchmarkReport(results);
       return EXIT_SUCCESS;
     }
 
-    SystemInfo data(cache, config, opts.compactFormat);
+    const SystemInfo data(cache, config, opts.compactFormat);
 
     if (opts.doctorMode) {
       PrintDoctorReport(data);
@@ -323,10 +340,11 @@ auto main(const i32 argc, CStr* argv[]) -> i32 try {
 #else
       Print("Plugin output formats require plugin support to be enabled.\n");
 #endif
-    } else if (!opts.compactFormat.empty())
+    } else if (!opts.compactFormat.empty()) {
       PrintCompactOutput(opts.compactFormat, data);
-    else
+    } else {
       Print(CreateUI(config, data, opts.noAscii));
+    }
   }
 
   return EXIT_SUCCESS;

@@ -1,13 +1,26 @@
 #include "SystemInfo.hpp"
 
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <chrono>
+#include <ctime>
+#include <exception>
+#include <format>
 #include <future>
+#include <ranges>
+#include <string>
+#include <utility>
 
+#include <Drac++/Core/Plugin.hpp>
 #include <Drac++/Core/System.hpp>
+#include <Drac++/Services/Packages.hpp>
 
 #if DRAC_ENABLE_PLUGINS
   #include <Drac++/Core/PluginManager.hpp>
 #endif
 
+#include <Drac++/Utils/CacheManager.hpp>
 #include <Drac++/Utils/Error.hpp>
 #include <Drac++/Utils/Logging.hpp>
 #include <Drac++/Utils/Types.hpp>
@@ -24,6 +37,92 @@ namespace draconis::core::system {
 #if DRAC_ENABLE_PLUGINS
     using draconis::core::plugin::IInfoProviderPlugin;
 #endif
+
+    enum class CompactField : u32 {
+      Date               = 1U << 0U,
+      Host               = 1U << 1U,
+      Os                 = 1U << 2U,
+      OsName             = 1U << 3U,
+      OsVersion          = 1U << 4U,
+      OsId               = 1U << 5U,
+      Kernel             = 1U << 6U,
+      Cpu                = 1U << 7U,
+      CpuCoresPhysical   = 1U << 8U,
+      CpuCoresLogical    = 1U << 9U,
+      Gpu                = 1U << 10U,
+      Ram                = 1U << 11U,
+      MemoryUsedBytes    = 1U << 12U,
+      MemoryTotalBytes   = 1U << 13U,
+      Disk               = 1U << 14U,
+      DiskUsedBytes      = 1U << 15U,
+      DiskTotalBytes     = 1U << 16U,
+      Uptime             = 1U << 17U,
+      UptimeSeconds      = 1U << 18U,
+      Shell              = 1U << 19U,
+      DesktopEnvironment = 1U << 20U,
+      WindowManager      = 1U << 21U,
+      Packages           = 1U << 22U,
+    };
+
+    struct CompactSelection {
+      u32  fields {};
+      bool hasPluginField {};
+
+      [[nodiscard]] auto contains(CompactField field) const -> bool {
+        return (fields & static_cast<u32>(field)) != 0;
+      }
+    };
+
+    constexpr std::array COMPACT_FIELDS {
+      std::pair {               StringView("date"),               CompactField::Date },
+      std::pair {               StringView("host"),               CompactField::Host },
+      std::pair {                 StringView("os"),                 CompactField::Os },
+      std::pair {            StringView("os_name"),             CompactField::OsName },
+      std::pair {         StringView("os_version"),          CompactField::OsVersion },
+      std::pair {              StringView("os_id"),               CompactField::OsId },
+      std::pair {             StringView("kernel"),             CompactField::Kernel },
+      std::pair {                StringView("cpu"),                CompactField::Cpu },
+      std::pair { StringView("cpu_cores_physical"),   CompactField::CpuCoresPhysical },
+      std::pair {  StringView("cpu_cores_logical"),    CompactField::CpuCoresLogical },
+      std::pair {                StringView("gpu"),                CompactField::Gpu },
+      std::pair {                StringView("ram"),                CompactField::Ram },
+      std::pair {  StringView("memory_used_bytes"),    CompactField::MemoryUsedBytes },
+      std::pair { StringView("memory_total_bytes"),   CompactField::MemoryTotalBytes },
+      std::pair {               StringView("disk"),               CompactField::Disk },
+      std::pair {    StringView("disk_used_bytes"),      CompactField::DiskUsedBytes },
+      std::pair {   StringView("disk_total_bytes"),     CompactField::DiskTotalBytes },
+      std::pair {             StringView("uptime"),             CompactField::Uptime },
+      std::pair {     StringView("uptime_seconds"),      CompactField::UptimeSeconds },
+      std::pair {              StringView("shell"),              CompactField::Shell },
+      std::pair {                 StringView("de"), CompactField::DesktopEnvironment },
+      std::pair {                 StringView("wm"),      CompactField::WindowManager },
+      std::pair {           StringView("packages"),           CompactField::Packages },
+    };
+
+    auto ParseCompactSelection(StringView compactTemplate) -> CompactSelection {
+      CompactSelection selection;
+      usize            position = 0;
+
+      while ((position = compactTemplate.find('{', position)) != StringView::npos) {
+        const usize end = compactTemplate.find('}', position + 1);
+        if (end == StringView::npos)
+          break;
+
+        const StringView key = compactTemplate.substr(position + 1, end - position - 1);
+        if (key.starts_with("plugin_"))
+          selection.hasPluginField = true;
+
+        const auto field = std::ranges::find_if(COMPACT_FIELDS, [key](const auto& candidate) -> bool {
+          return candidate.first == key;
+        });
+        if (field != COMPACT_FIELDS.end())
+          selection.fields |= static_cast<u32>(field->second);
+
+        position = end + 1;
+      }
+
+      return selection;
+    }
 
     auto GetDate() -> Result<String> {
       using std::chrono::system_clock;
@@ -72,11 +171,10 @@ namespace draconis::core::system {
   ) {
     debug_log("SystemInfo: Starting construction");
 
-    const bool collectAll = compactTemplate.empty();
-    const auto wants      = [&](StringView key) -> bool {
-      if (collectAll)
-        return true;
-      return compactTemplate.find(std::format("{{{}}}", key)) != StringView::npos;
+    const bool             collectAll = compactTemplate.empty();
+    const CompactSelection selection  = ParseCompactSelection(compactTemplate);
+    const auto             wants      = [&](CompactField field) -> bool {
+      return collectAll || selection.contains(field);
     };
 
     // I'm not sure if AMD uses trademark symbols in their CPU models, but I know
@@ -97,38 +195,38 @@ namespace draconis::core::system {
 
     Option<std::future<Result<String>>> windowManagerFuture;
     Option<std::future<Result<String>>> gpuModelFuture;
-    if (utils::cache::CacheManager::ignoreCache.load(std::memory_order_relaxed)) {
-      if (wants("wm"))
-        windowManagerFuture.emplace(std::async(std::launch::async, [&cache] { return GetWindowManager(cache); }));
-      if (wants("gpu"))
-        gpuModelFuture.emplace(std::async(std::launch::async, [&cache] { return GetGPUModel(cache); }));
+    const bool                          wantsWindowManager = wants(CompactField::WindowManager);
+    const bool                          wantsGpu           = wants(CompactField::Gpu);
+    if (utils::cache::CacheManager::ignoreCache.load(std::memory_order_relaxed) && wantsWindowManager && wantsGpu) {
+      windowManagerFuture.emplace(std::async(std::launch::async, [&cache] -> Result<String> { return GetWindowManager(cache); }));
+      gpuModelFuture.emplace(std::async(std::launch::async, [&cache] -> Result<String> { return GetGPUModel(cache); }));
     }
 
-    if (wants("de"))
+    if (wants(CompactField::DesktopEnvironment))
       this->desktopEnv = GetDesktopEnvironment(cache);
-    if (wants("wm") && !windowManagerFuture)
+    if (wantsWindowManager && !windowManagerFuture)
       this->windowMgr = GetWindowManager(cache);
-    if (wants("os") || wants("os_name") || wants("os_version") || wants("os_id"))
+    if (wants(CompactField::Os) || wants(CompactField::OsName) || wants(CompactField::OsVersion) || wants(CompactField::OsId))
       this->operatingSystem = GetOperatingSystem(cache);
-    if (wants("kernel"))
+    if (wants(CompactField::Kernel))
       this->kernelVersion = GetKernelVersion(cache);
-    if (wants("host"))
+    if (wants(CompactField::Host))
       this->host = GetHost(cache);
-    if (wants("cpu"))
+    if (wants(CompactField::Cpu))
       this->cpuModel = replaceTrademarkSymbols(GetCPUModel(cache));
-    if (wants("cpu_cores_physical") || wants("cpu_cores_logical"))
+    if (wants(CompactField::CpuCoresPhysical) || wants(CompactField::CpuCoresLogical))
       this->cpuCores = GetCPUCores(cache);
-    if (wants("gpu") && !gpuModelFuture)
+    if (wantsGpu && !gpuModelFuture)
       this->gpuModel = GetGPUModel(cache);
-    if (wants("shell"))
+    if (wants(CompactField::Shell))
       this->shell = GetShell(cache);
-    if (wants("ram") || wants("memory_used_bytes") || wants("memory_total_bytes"))
+    if (wants(CompactField::Ram) || wants(CompactField::MemoryUsedBytes) || wants(CompactField::MemoryTotalBytes))
       this->memInfo = GetMemInfo(cache);
-    if (wants("disk") || wants("disk_used_bytes") || wants("disk_total_bytes"))
+    if (wants(CompactField::Disk) || wants(CompactField::DiskUsedBytes) || wants(CompactField::DiskTotalBytes))
       this->diskUsage = GetDiskUsage(cache);
-    if (wants("uptime") || wants("uptime_seconds"))
+    if (wants(CompactField::Uptime) || wants(CompactField::UptimeSeconds))
       this->uptime = GetUptime();
-    if (wants("date"))
+    if (wants(CompactField::Date))
       this->date = GetDate();
 
     if (windowManagerFuture)
@@ -137,12 +235,12 @@ namespace draconis::core::system {
       this->gpuModel = gpuModelFuture->get();
 
 #if DRAC_ENABLE_PACKAGECOUNT
-    if (wants("packages"))
+    if (wants(CompactField::Packages))
       this->packageCount = draconis::services::packages::GetTotalCount(cache, config.enabledPackageManagers);
 #endif
 
 #if DRAC_ENABLE_PLUGINS
-    if (collectAll || compactTemplate.find("{plugin_") != StringView::npos)
+    if (collectAll || selection.hasPluginField)
       collectPluginData(cache);
 #endif
     debug_log("SystemInfo: Construction complete");
@@ -290,17 +388,40 @@ namespace draconis::core::system {
       return collected;
     };
 
-    Vec<std::future<Option<CollectedPlugin>>> futures;
-    futures.reserve(infoProviderPlugins.size());
-    for (IInfoProviderPlugin* plugin : infoProviderPlugins)
-      futures.emplace_back(std::async(std::launch::async, collectOne, plugin));
+    const auto commitCollected = [this](CollectedPlugin collected) -> void {
+      if (collected.collected)
+        pluginData.emplace(collected.id, std::move(collected.fields));
+      pluginDisplay.emplace(std::move(collected.id), std::move(collected.display));
+    };
 
-    for (auto& future : futures)
-      if (auto collected = future.get()) {
-        if (collected->collected)
-          pluginData.emplace(collected->id, std::move(collected->fields));
-        pluginDisplay.emplace(std::move(collected->id), std::move(collected->display));
+    if (infoProviderPlugins.size() == 1) {
+      if (auto collected = collectOne(infoProviderPlugins.front()))
+        commitCollected(std::move(*collected));
+    } else {
+      constexpr usize    maxPluginWorkers = 2;
+      const usize        workerCount      = std::min(maxPluginWorkers, infoProviderPlugins.size());
+      std::atomic<usize> nextPlugin {};
+
+      Vec<std::future<Vec<CollectedPlugin>>> workers;
+      workers.reserve(workerCount);
+      for (usize worker = 0; worker < workerCount; ++worker) {
+        workers.emplace_back(std::async(std::launch::async, [&] -> Vec<CollectedPlugin> {
+          Vec<CollectedPlugin> collectedPlugins;
+          while (true) {
+            const usize index = nextPlugin.fetch_add(1, std::memory_order_relaxed);
+            if (index >= infoProviderPlugins.size())
+              break;
+            if (auto collected = collectOne(infoProviderPlugins.subspan(index).front()))
+              collectedPlugins.emplace_back(std::move(*collected));
+          }
+          return collectedPlugins;
+        }));
       }
+
+      for (auto& worker : workers)
+        for (auto& collected : worker.get())
+          commitCollected(std::move(collected));
+    }
 
     debug_log("Total plugins with data: {}", pluginData.size());
   }

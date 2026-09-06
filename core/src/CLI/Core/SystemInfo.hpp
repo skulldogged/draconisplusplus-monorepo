@@ -69,7 +69,7 @@ namespace draconis::core::system {
      * @param fieldName Name of the field to retrieve
      * @return Field value or empty string if not found
      */
-    [[nodiscard]] auto getPluginField(const types::String& pluginId, const types::String& fieldName) const noexcept -> types::String {
+    [[nodiscard]] auto getPluginField(const types::String& pluginId, const types::String& fieldName) const -> types::String {
       if (auto pluginIter = pluginData.find(pluginId); pluginIter != pluginData.end())
         if (auto fieldIter = pluginIter->second.find(fieldName); fieldIter != pluginIter->second.end())
           return plugin::PluginFieldToString(fieldIter->second);
