@@ -84,7 +84,7 @@ subdir('core')
 subdir('c-api')
 
 # Dynamic plugin builds (static plugins are compiled into core instead).
-if get_option('plugins').allowed() and static_plugin_list.length() == 0
+if get_option('plugins').allowed()
   plugin_cpp_args = ['-DDRAC_PLUGIN_BUILD=1']
 
   if cpp.get_id() not in ['msvc', 'clang-cl']
@@ -105,6 +105,10 @@ if get_option('plugins').allowed() and static_plugin_list.length() == 0
   plugin_install_dir = get_option('libdir') / 'draconis++' / 'plugins'
 
   foreach plugin_name, plugin_dir : discovered_plugins
+    if plugin_name in static_plugin_list
+      continue
+    endif
+
     plugin_info = run_command(
       python_prog, plugin_helper, 'info', plugin_dir, '--platform', host_system,
       check: true,
@@ -127,6 +131,7 @@ if get_option('plugins').allowed() and static_plugin_list.length() == 0
           include_type: parts[2],
           static: parts[3] == 'true',
           required: false,
+          allow_fallback: true,
         )
         if plugin_dep.found()
           plugin_deps += plugin_dep
