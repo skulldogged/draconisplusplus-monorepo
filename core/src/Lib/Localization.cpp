@@ -43,7 +43,7 @@ namespace draconis::utils::localization {
 
     // If default language didn't work or is English, try system language
     if (!languageSet)
-      if (String systemLang = getSystemLanguage(); systemLang != "en" && setLanguage(systemLang))
+      if (const String systemLang = getSystemLanguage(); systemLang != "en" && setLanguage(systemLang))
         languageSet = true;
 
     // Final fallback to English
@@ -87,8 +87,8 @@ namespace draconis::utils::localization {
   auto TranslationManager::get(StringView key) const -> String {
     // Use hash-based lookup for O(1) performance (much faster than linear search)
     if (m_currentMap) {
-      uint64_t         keyHash = hashKey(key);
-      std::string_view result  = FindTranslation(keyHash, *m_currentMap);
+      const uint64_t         keyHash = hashKey(key);
+      const std::string_view result  = FindTranslation(keyHash, *m_currentMap);
       if (!result.empty()) { // Found translation
         debug_log("Translation found for key '{}' in current language: '{}'", key, String(result));
         return String(result);
@@ -122,14 +122,14 @@ namespace draconis::utils::localization {
   auto TranslationManager::hasKey(StringView key) const -> bool {
     // Use hash-based lookup for O(1) performance
     if (m_currentMap) {
-      uint64_t         keyHash = hashKey(key);
-      std::string_view result  = FindTranslation(keyHash, *m_currentMap);
+      const uint64_t         keyHash = hashKey(key);
+      const std::string_view result  = FindTranslation(keyHash, *m_currentMap);
       return !result.empty();
     }
 
     // Fallback to linear search
     if (m_currentTranslations) {
-      String result = FindTranslationLinear(key, *m_currentTranslations);
+      const String result = FindTranslationLinear(key, *m_currentTranslations);
       return result != String(key);
     }
 
@@ -167,10 +167,10 @@ namespace draconis::utils::localization {
 
   // Helper function to extract language code from locale string
   auto TranslationManager::extractLanguageCode(StringView localeStr) -> String {
-    size_t     dotPos   = localeStr.find('.');
-    StringView langPart = localeStr.substr(0, dotPos);
+    const size_t     dotPos   = localeStr.find('.');
+    const StringView langPart = localeStr.substr(0, dotPos);
 
-    size_t underscorePos = langPart.find('_');
+    const size_t underscorePos = langPart.find('_');
     return String(langPart.substr(0, underscorePos));
   }
 

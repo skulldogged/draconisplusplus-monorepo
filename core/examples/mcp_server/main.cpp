@@ -46,7 +46,8 @@ using GlzObject  = glz::generic::object_t;
 using GlzRawJson = glz::raw_json;
 using GlzVal     = glz::generic::val_t;
 
-struct ToolResponse {
+namespace {
+  struct ToolResponse {
   GlzJson result;
   bool    isError = false;
 
@@ -55,14 +56,14 @@ struct ToolResponse {
   ToolResponse(GlzJson result, bool isError) : result(std::move(result)), isError(isError) {}
 };
 
-struct ToolParam {
+  struct ToolParam {
   String name;
   String description;
   String type     = "string";
   bool   required = false;
 };
 
-struct Tool {
+  struct Tool {
   String         name;
   String         description;
   Vec<ToolParam> parameters;
@@ -76,7 +77,7 @@ struct Tool {
     : name(std::move(name)), description(std::move(description)), parameters({ std::move(parameter) }) {}
 };
 
-struct SystemInfoResponse {
+  struct SystemInfoResponse {
   Option<OSInfo>   operatingSystem;
   Option<String>   kernelVersion;
   Option<String>   host;
@@ -87,7 +88,7 @@ struct SystemInfoResponse {
   Option<CPUCores> cpuCores;
 };
 
-struct HardwareInfoResponse {
+  struct HardwareInfoResponse {
   Option<String>        cpuModel;
   Option<CPUCores>      cpuCores;
   Option<String>        gpuModel;
@@ -95,29 +96,30 @@ struct HardwareInfoResponse {
   Option<ResourceUsage> diskUsage;
 };
 
-struct NetworkInfoResponse {
+  struct NetworkInfoResponse {
   Option<Vec<NetworkInterface>> interfaces;
   Option<NetworkInterface>      primaryInterface;
 };
 
-struct DisplayInfoResponse {
+  struct DisplayInfoResponse {
   Option<Vec<DisplayInfo>> displays;
   Option<DisplayInfo>      primaryDisplay;
 };
 
-struct UptimeInfoResponse {
+  struct UptimeInfoResponse {
   u32    seconds;
   String formatted;
 };
 
-struct ComprehensiveInfo {
+  struct ComprehensiveInfo {
   SystemInfoResponse       system;
   HardwareInfoResponse     hardware;
   NetworkInfoResponse      network;
   DisplayInfoResponse      display;
   UptimeInfoResponse       uptime;
   Option<Map<String, u64>> packages;
-};
+  };
+} // namespace
 
 namespace glz {
   template <>
@@ -125,7 +127,7 @@ namespace glz {
     using T = ToolResponse;
 
     // clang-format off
-    static constexpr detail::Object value = object(
+    [[maybe_unused]] static constexpr detail::Object value = object(
       "result",  &T::result,
       "isError", &T::isError
     );
@@ -137,7 +139,7 @@ namespace glz {
     using T = ToolParam;
 
     // clang-format off
-    static constexpr detail::Object value = object(
+    [[maybe_unused]] static constexpr detail::Object value = object(
       "name",        &T::name,
       "description", &T::description,
       "required",    &T::required,
@@ -151,7 +153,7 @@ namespace glz {
     using T = Tool;
 
     // clang-format off
-    static constexpr detail::Object value = object(
+    [[maybe_unused]] static constexpr detail::Object value = object(
       "name",        &T::name,
       "description", &T::description,
       "parameters",  &T::parameters
@@ -280,7 +282,7 @@ namespace {
   auto serializeToJson(const T& obj) -> GlzJson {
     String jsonStr;
 
-    if (glz::error_ctx errc = glz::write_json(obj, jsonStr); !errc) {
+    if (const glz::error_ctx errc = glz::write_json(obj, jsonStr); !errc) {
       GlzJson jsonVal;
 
       if (!glz::read_json(jsonVal, jsonStr))
@@ -389,7 +391,7 @@ namespace {
       String      managersStr = mgrIter->second;
       Vec<String> managersList;
 
-      managersList.reserve(std::count(managersStr.begin(), managersStr.end(), ',') + 1);
+      managersList.reserve(std::ranges::count(managersStr, ',') + 1);
       usize pos = 0;
 
       while ((pos = managersStr.find(',')) != String::npos) {
@@ -439,8 +441,11 @@ namespace {
     CacheManager& cacheManager = GetCacheManager();
 
     DisplayInfoResponse info;
-    if (Result<Vec<DisplayInfo>> res = GetOutputs(cacheManager); res)
-      info.displays = *res;
+    Result<Vec<DisplayInfo>> displaysResult = GetOutputs(cacheManager);
+    if (!displaysResult)
+      return { makeErrorResult("Failed to get displays: " + displaysResult.error().message), true };
+    info.displays = std::move(*displaysResult);
+
     if (Result<DisplayInfo> res = GetPrimaryOutput(cacheManager); res)
       info.primaryDisplay = *res;
 
@@ -455,12 +460,12 @@ namespace {
     if (!uptimeResult)
       return { makeErrorResult("Failed to get uptime: " + uptimeResult.error().message), true };
 
-    u32 seconds          = uptimeResult->count();
+    const u32 seconds          = uptimeResult->count();
     u32 hours            = seconds / 3600;
     u32 minutes          = (seconds % 3600) / 60;
     u32 remainingSeconds = seconds % 60;
 
-    UptimeInfoResponse info { .seconds = seconds, .formatted = std::format("{}h {}m {}s", hours, minutes, remainingSeconds) };
+    const UptimeInfoResponse info { .seconds = seconds, .formatted = std::format("{}h {}m {}s", hours, minutes, remainingSeconds) };
     return { makeSuccessResult(info) };
   }
 
@@ -470,7 +475,7 @@ namespace {
     ComprehensiveInfo info;
 
     // Helper lambda to safely assign optional results
-    auto tryAssign = [](auto& dest, auto result) {
+    auto tryAssign = [](auto& dest, auto result) -> auto {
       if (result)
         dest = *result;
     };
@@ -495,7 +500,7 @@ namespace {
     tryAssign(info.display.primaryDisplay, GetPrimaryOutput(cacheManager));
 
     if (Result<std::chrono::seconds> res = GetUptime(); res) {
-      u32 seconds          = res->count();
+      const u32 seconds          = res->count();
       u32 hours            = seconds / 3600;
       u32 minutes          = (seconds % 3600) / 60;
       u32 remainingSeconds = seconds % 60;
@@ -537,7 +542,8 @@ namespace {
   }
 } // namespace
 
-class DracStdioServer {
+namespace {
+  class DracStdioServer {
  public:
   DracStdioServer(String name, String version)
     : m_name(std::move(name)), m_version(std::move(version)) {}
@@ -563,24 +569,24 @@ class DracStdioServer {
 
       GlzObject requestJson;
 
-      glz::error_ctx errc = glz::read_json(requestJson, line);
+      const glz::error_ctx errc = glz::read_json(requestJson, line);
 
       if (errc) {
         std::cerr << "Failed to parse input: " << glz::format_error(errc, line) << '\n';
         continue;
       }
 
-      String method = requestJson.contains("method") ? requestJson["method"].get<String>() : "";
+      const String method = requestJson.contains("method") ? requestJson["method"].get<String>() : "";
 
-      GlzJson params = requestJson.contains("params") ? requestJson["params"] : GlzJson {};
+      const GlzJson params = requestJson.contains("params") ? requestJson["params"] : GlzJson {};
 
-      String jsonrpc = requestJson.contains("jsonrpc") ? requestJson["jsonrpc"].get<String>() : "2.0";
+      const String jsonrpc = requestJson.contains("jsonrpc") ? requestJson["jsonrpc"].get<String>() : "2.0";
 
       try {
         Result<GlzJson> result = processRequest(method, params);
 
         if (requestJson.contains("id")) {
-          GlzJson idVal = requestJson["id"];
+          const GlzJson idVal = requestJson["id"];
 
           GlzObject response;
           response["jsonrpc"] = jsonrpc;
@@ -596,7 +602,7 @@ class DracStdioServer {
           }
 
           String responseStr;
-          if (glz::error_ctx writeErrc = glz::write_json(response, responseStr); writeErrc)
+          if (const glz::error_ctx writeErrc = glz::write_json(response, responseStr); writeErrc)
             ERR_FMT(ParseError, "Failed to serialize response: {}", glz::format_error(writeErrc, responseStr));
 
           std::cout << responseStr << '\n';
@@ -604,7 +610,7 @@ class DracStdioServer {
         }
       } catch (const Exception& e) {
         if (requestJson.contains("id")) {
-          GlzJson idVal = requestJson["id"];
+          const GlzJson idVal = requestJson["id"];
 
           GlzObject response;
           response["jsonrpc"] = jsonrpc;
@@ -615,7 +621,7 @@ class DracStdioServer {
           };
 
           String responseStr;
-          if (glz::error_ctx writeErrc = glz::write_json(response, responseStr); writeErrc)
+          if (const glz::error_ctx writeErrc = glz::write_json(response, responseStr); writeErrc)
             ERR_FMT(ParseError, "Failed to serialize error response: {}", glz::format_error(writeErrc, responseStr));
 
           std::cout << responseStr << '\n';
@@ -673,7 +679,7 @@ class DracStdioServer {
         inputSchema["required"]   = inputRequired;
         inputSchema["title"]      = toolPair.first.name + "Arguments";
 
-        GlzObject outputSchema = {
+        const GlzObject outputSchema = {
           {       "type",                                                                                                                   "object" },
           { "properties", { { "data", { { "title", "Data" }, { "type", "object" } } }, { "error", { { "title", "Error" }, { "type", "object" } } } } },
           {      "title",                                                                                             toolPair.first.name + "Output" },
@@ -693,7 +699,8 @@ class DracStdioServer {
       if (!params.contains("name"))
         ERR(InvalidArgument, "Missing tool name");
 
-      String toolName = params["name"].get<String>();
+      const auto& paramsObject = params.get<GlzObject>();
+      String      toolName     = paramsObject.at("name").get<String>();
 
       auto iter = m_tools.find(toolName);
 
@@ -703,7 +710,7 @@ class DracStdioServer {
       Map<String, String> arguments;
 
       if (params.contains("arguments")) {
-        const GlzJson& args = params["arguments"];
+        const GlzJson& args = paramsObject.at("arguments");
 
         if (args.is_object())
           for (const auto& [key, value] : args.get<GlzObject>()) {
@@ -723,10 +730,11 @@ class DracStdioServer {
       String outStr;
 
       if (!result.result.is_string()) {
-        if (glz::error_ctx writeErrc = glz::write_json(result.result, outStr); writeErrc)
+        if (const glz::error_ctx writeErrc = glz::write_json(result.result, outStr); writeErrc)
           ERR_FMT(ParseError, "Failed to serialize result: {}", glz::format_error(writeErrc, outStr));
-      } else
+      } else {
         outStr = result.result.get<String>();
+      }
 
       GlzArray contentArr;
 
@@ -755,7 +763,8 @@ class DracStdioServer {
 
     ERR_FMT(NotSupported, "Unknown method: {}", method);
   }
-};
+  };
+} // namespace
 
 auto main() -> i32 {
   DracStdioServer server("Draconis++ MCP Server", DRAC_VERSION);
@@ -764,20 +773,20 @@ auto main() -> i32 {
     { "tools", { { "listChanged", true } } }
   });
 
-  Tool cacheClearTool("cache_clear", "Clear all cached data");
-  Tool systemInfoTool("system_info", "Get system information (OS, kernel, host, shell, desktop environment, window manager)");
-  Tool hardwareInfoTool("hardware_info", "Get hardware information (CPU, GPU, memory, disk)");
-  Tool networkInfoTool("network_info", "Get network interface information");
-  Tool displayInfoTool("display_info", "Get display/monitor information");
-  Tool uptimeTool("uptime", "Get system uptime");
+  const Tool cacheClearTool("cache_clear", "Clear all cached data");
+  const Tool systemInfoTool("system_info", "Get system information (OS, kernel, host, shell, desktop environment, window manager)");
+  const Tool hardwareInfoTool("hardware_info", "Get hardware information (CPU, GPU, memory, disk)");
+  const Tool networkInfoTool("network_info", "Get network interface information");
+  const Tool displayInfoTool("display_info", "Get display/monitor information");
+  const Tool uptimeTool("uptime", "Get system uptime");
 
-  Tool packageCountTool(
+  const Tool packageCountTool(
     "package_count",
     "Get individual package counts from available package managers",
     ToolParam("managers", "Comma-separated list of package managers to check (e.g., 'pacman,dpkg,cargo'). Omit this parameter to check all available package managers.")
   );
 
-  Tool comprehensiveTool(
+  const Tool comprehensiveTool(
     "comprehensive_info",
     "Get all system information at once (system, hardware, network, display, uptime, individual package counts)"
   );

@@ -95,18 +95,18 @@ namespace draconis::cli {
     }
 #endif
 
-    const auto constructionStart = high_resolution_clock::now();
-    SystemInfo benchmarkData(cache, config);
-    const auto constructionEnd = high_resolution_clock::now();
+    const auto       constructionStart = high_resolution_clock::now();
+    const SystemInfo benchmarkData(cache, config);
+    const auto       constructionEnd = high_resolution_clock::now();
     results.push_back({
       .name       = "SystemInfo Construction",
       .durationMs = duration<f64, std::milli>(constructionEnd - constructionStart).count(),
       .success    = true,
     });
 
-    const auto uiStart    = high_resolution_clock::now();
-    String     renderedUi = ui::CreateUI(config, benchmarkData, true);
-    const auto uiEnd      = high_resolution_clock::now();
+    const auto   uiStart    = high_resolution_clock::now();
+    const String renderedUi = ui::CreateUI(config, benchmarkData, true);
+    const auto   uiEnd      = high_resolution_clock::now();
     results.push_back({
       .name       = "UI Rendering",
       .durationMs = duration<f64, std::milli>(uiEnd - uiStart).count(),
@@ -147,7 +147,7 @@ namespace draconis::cli {
       maxNameLen = std::max(maxNameLen, result.name.size());
 
     // Helper to print a single result
-    auto printResult = [&maxNameLen](const BenchmarkResult& result) {
+    auto printResult = [&maxNameLen](const BenchmarkResult& result) -> void {
       String status  = result.success ? "✓" : "✗";
       String padding = String(maxNameLen - result.name.size(), ' ');
       Println("  {} {}{} {:>8.2f} ms", status, result.name, padding, result.durationMs);
@@ -225,9 +225,9 @@ namespace draconis::cli {
     Println("Core System Readouts:");
     Println("---------------------");
 
-    if (coreFailureCount == 0)
+    if (coreFailureCount == 0) {
       Println("  ✓ All {} core readouts were successful!", coreReadoutCount);
-    else {
+    } else {
       Println(
         "  Out of {} core readouts, {} failed.\n",
         coreReadoutCount,
@@ -256,16 +256,16 @@ namespace draconis::cli {
         if (displayInfo.value.has_value())
           pluginSuccesses.push_back(displayInfo.label);
         else
-          pluginFailures.push_back({ displayInfo.label, displayInfo.error });
+          pluginFailures.emplace_back(displayInfo.label, displayInfo.error);
       }
 
       Println();
       Println("Plugin Readouts:");
       Println("----------------");
 
-      if (pluginFailures.empty())
+      if (pluginFailures.empty()) {
         Println("  ✓ All {} plugin readouts were successful!", pluginDisplay.size());
-      else {
+      } else {
         Println(
           "  Out of {} plugin readouts, {} failed.\n",
           pluginDisplay.size(),
@@ -333,7 +333,7 @@ namespace draconis::cli {
         break;
       }
 
-      const StringView key(templateStr.data() + openPos + 1, closePos - openPos - 1);
+      const StringView key = StringView(templateStr).substr(openPos + 1, closePos - openPos - 1);
       if (const auto iter = infoMap.find(key); iter != infoMap.end())
         output += iter->second;
 
@@ -366,7 +366,7 @@ namespace draconis::cli {
     auto outputPlugins = pluginManager.getOutputFormatPlugins();
 
     // Look for a plugin that provides the requested format
-    draconis::core::plugin::IOutputFormatPlugin* formatPlugin = nullptr;
+    const draconis::core::plugin::IOutputFormatPlugin* formatPlugin = nullptr;
 
     for (auto* plugin : outputPlugins) {
       for (const auto& name : plugin->getFormatNames()) {
@@ -385,7 +385,7 @@ namespace draconis::cli {
     }
 
     // Get system info as a map (single source of truth for core data)
-    Map<String, String> outputData = data.toMap();
+    const Map<String, String> outputData = data.toMap();
 
     // Get plugin data directly (already organized by plugin ID)
     const auto& pluginData = data.pluginData;
@@ -430,7 +430,7 @@ namespace draconis::cli {
       Print("==================\n");
 
       for (const auto& pluginName : discoveredPlugins) {
-        bool isLoaded = std::ranges::any_of(
+        const bool isLoaded = std::ranges::any_of(
           loadedPlugins,
           [&pluginName](const draconis::core::plugin::PluginMetadata& meta) -> bool {
             return meta.name == pluginName;

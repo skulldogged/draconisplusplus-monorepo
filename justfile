@@ -11,6 +11,8 @@ default:
 
 # Build directory
 build_dir := "build"
+perf_build_dir := "build-perf"
+perf_native_file := if os() == "windows" { "--native-file windows-clang.ini" } else { "" }
 
 # Python executable name differs between Windows and Unix-like systems.
 python_cmd := if os() == "windows" { "python" } else { "python3" }
@@ -50,6 +52,12 @@ build-verbose:
 release:
     meson setup {{build_dir}} --buildtype=release -Db_lto=true --reconfigure
     meson compile -C {{build_dir}}
+
+# Build a dedicated release+LTO tree for repeatable performance testing.
+# Pass plugin options on first setup, e.g. just build-perf -Dplugin_dirs=../plugins.
+build-perf *ARGS:
+    meson setup {{perf_build_dir}} {{perf_native_file}} --buildtype=release -Db_lto=true {{ARGS}}
+    meson compile -C {{perf_build_dir}}
 
 # ===================== #
 #   Run Commands        #
@@ -98,9 +106,9 @@ rebuild: clean build
 format:
     {{python_cmd}} tools/clang_format.py core/src core/include c-api/src c-api/include bindings/lua/src bindings/python/src
 
-# Run static analysis
-lint:
-    clang-tidy -p {{build_dir}}
+# Run static analysis over project-owned entries in the compilation database.
+lint *ARGS:
+    {{python_cmd}} tools/clang_tidy.py --build-dir {{build_dir}} {{ARGS}}
 
 # Generate documentation with Doxygen
 docs:

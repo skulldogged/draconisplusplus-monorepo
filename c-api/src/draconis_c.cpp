@@ -24,6 +24,10 @@ using namespace draconis::utils::types;
 using namespace draconis::core::plugin;
 #endif
 
+// The C ABI intentionally represents recursive values as tagged unions and
+// exposes owning arrays through pointer-plus-count structures.
+// NOLINTBEGIN(cppcoreguidelines-pro-type-union-access,misc-no-recursion)
+
 // Convert C++ DracErrorCode to C DracErrorCode enum value
 #define TO_C_ERROR(err) static_cast<::DracErrorCode>(static_cast<u8>((err).code))
 
@@ -42,6 +46,11 @@ namespace {
   }
 
 #if DRAC_ENABLE_PLUGINS
+  auto InitStaticPluginsForCAPI() -> size_t {
+    static const auto STATIC_PLUGIN_COUNT = static_cast<size_t>(::draconis::core::plugin::DracInitStaticPlugins());
+    return STATIC_PLUGIN_COUNT;
+  }
+
   auto ToCPluginFieldValue(const PluginFieldValue& value) -> DracPluginFieldValue {
     return std::visit(
       [](const auto& inner) -> DracPluginFieldValue {
@@ -73,29 +82,32 @@ namespace {
             .stringValue = DupString(inner),
           };
         } else if constexpr (std::same_as<T, PluginFieldArray>) {
-          DracPluginFieldValueArray array {
+          const DracPluginFieldValueArray array {
             .items = new DracPluginFieldValue[inner.size()],
             .count = inner.size(),
           };
 
-          for (usize i = 0; i < inner.size(); ++i)
-            array.items[i] = ToCPluginFieldValue(inner[i]);
+          Span<DracPluginFieldValue> items(array.items, array.count);
+          usize                      index = 0;
+          for (DracPluginFieldValue& item : items)
+            item = ToCPluginFieldValue(inner.at(index++));
 
           return {
             .type       = DRAC_PLUGIN_FIELD_ARRAY,
             .arrayValue = array,
           };
         } else {
-          DracPluginFieldValueObject object {
+          const DracPluginFieldValueObject object {
             .items = new DracPluginField[inner.size()],
             .count = inner.size(),
           };
 
-          usize i = 0;
+          const Span<DracPluginField> items(object.items, object.count);
+          usize                       index = 0;
           for (const auto& [key, fieldValue] : inner) {
-            object.items[i].key   = DupString(key);
-            object.items[i].value = ToCPluginFieldValue(fieldValue);
-            ++i;
+            DracPluginField& item = items.subspan(index++).front();
+            item.key              = DupString(key);
+            item.value            = ToCPluginFieldValue(fieldValue);
           }
 
           return {
@@ -115,17 +127,17 @@ namespace {
         value.stringValue = nullptr;
         break;
       case DRAC_PLUGIN_FIELD_ARRAY:
-        for (size_t i = 0; i < value.arrayValue.count; ++i)
-          FreePluginFieldValue(value.arrayValue.items[i]);
+        for (DracPluginFieldValue& item : Span(value.arrayValue.items, value.arrayValue.count))
+          FreePluginFieldValue(item);
         delete[] value.arrayValue.items;
         value.arrayValue.items = nullptr;
         value.arrayValue.count = 0;
         break;
       case DRAC_PLUGIN_FIELD_OBJECT:
-        for (size_t i = 0; i < value.objectValue.count; ++i) {
-          delete[] value.objectValue.items[i].key;
-          value.objectValue.items[i].key = nullptr;
-          FreePluginFieldValue(value.objectValue.items[i].value);
+        for (DracPluginField& item : Span(value.objectValue.items, value.objectValue.count)) {
+          delete[] item.key;
+          item.key = nullptr;
+          FreePluginFieldValue(item.value);
         }
         delete[] value.objectValue.items;
         value.objectValue.items = nullptr;
@@ -139,6 +151,8 @@ namespace {
     }
   }
 #endif
+
+  // NOLINTEND(cppcoreguidelines-pro-type-union-access,misc-no-recursion)
 
 } // namespace
 
@@ -250,9 +264,9 @@ extern "C" {
     Result<ResourceUsage> result = GetMemInfo(mgr->inner);
 
     if (result.has_value()) {
-      ResourceUsage& val    = result.value();
-      out_usage->usedBytes  = val.usedBytes;
-      out_usage->totalBytes = val.totalBytes;
+      const ResourceUsage& val = result.value();
+      out_usage->usedBytes     = val.usedBytes;
+      out_usage->totalBytes    = val.totalBytes;
       return DRAC_SUCCESS;
     }
 
@@ -266,7 +280,7 @@ extern "C" {
     Result<CPUCores> result = GetCPUCores(mgr->inner);
 
     if (result.has_value()) {
-      CPUCores& val       = result.value();
+      const CPUCores& val = result.value();
       out_cores->physical = val.physical;
       out_cores->logical  = val.logical;
       return DRAC_SUCCESS;
@@ -284,7 +298,7 @@ extern "C" {
     Result<OSInfo> result = GetOperatingSystem(mgr->inner);
 
     if (result.has_value()) {
-      OSInfo& val       = result.value();
+      const OSInfo& val = result.value();
       out_info->name    = DupString(val.name);
       out_info->version = DupString(val.version);
       out_info->id      = DupString(val.id);
@@ -399,9 +413,9 @@ extern "C" {
     Result<ResourceUsage> result = GetDiskUsage(mgr->inner);
 
     if (result.has_value()) {
-      ResourceUsage& val    = result.value();
-      out_usage->usedBytes  = val.usedBytes;
-      out_usage->totalBytes = val.totalBytes;
+      const ResourceUsage& val = result.value();
+      out_usage->usedBytes     = val.usedBytes;
+      out_usage->totalBytes    = val.totalBytes;
       return DRAC_SUCCESS;
     }
 
@@ -425,14 +439,14 @@ extern "C" {
       usize              idx = 0;
 
       for (DracDiskInfo& dst : outItems) {
-        DiskInfo& src     = disks[idx++];
-        dst.name          = DupString(src.name);
-        dst.mountPoint    = DupString(src.mountPoint);
-        dst.filesystem    = DupString(src.filesystem);
-        dst.driveType     = DupString(src.driveType);
-        dst.totalBytes    = src.totalBytes;
-        dst.usedBytes     = src.usedBytes;
-        dst.isSystemDrive = src.isSystemDrive;
+        const DiskInfo& src = disks.at(idx++);
+        dst.name            = DupString(src.name);
+        dst.mountPoint      = DupString(src.mountPoint);
+        dst.filesystem      = DupString(src.filesystem);
+        dst.driveType       = DupString(src.driveType);
+        dst.totalBytes      = src.totalBytes;
+        dst.usedBytes       = src.usedBytes;
+        dst.isSystemDrive   = src.isSystemDrive;
       }
 
       return DRAC_SUCCESS;
@@ -458,7 +472,7 @@ extern "C" {
     Result<DiskInfo> result = GetSystemDisk(mgr->inner);
 
     if (result.has_value()) {
-      DiskInfo& disk          = result.value();
+      const DiskInfo& disk    = result.value();
       out_info->name          = DupString(disk.name);
       out_info->mountPoint    = DupString(disk.mountPoint);
       out_info->filesystem    = DupString(disk.filesystem);
@@ -486,12 +500,12 @@ extern "C" {
       Span<DracDisplayInfo> outItems(out_list->items, out_list->count);
       usize                 idx = 0;
       for (DracDisplayInfo& dst : outItems) {
-        DisplayInfo& src = outputs[idx++];
-        dst.id           = src.id;
-        dst.width        = src.resolution.width;
-        dst.height       = src.resolution.height;
-        dst.refreshRate  = src.refreshRate;
-        dst.isPrimary    = src.isPrimary;
+        const DisplayInfo& src = outputs.at(idx++);
+        dst.id                 = src.id;
+        dst.width              = src.resolution.width;
+        dst.height             = src.resolution.height;
+        dst.refreshRate        = src.refreshRate;
+        dst.isPrimary          = src.isPrimary;
       }
       return DRAC_SUCCESS;
     }
@@ -506,12 +520,12 @@ extern "C" {
     Result<DisplayInfo> result = GetPrimaryOutput(mgr->inner);
 
     if (result.has_value()) {
-      DisplayInfo& output   = result.value();
-      out_info->id          = output.id;
-      out_info->width       = output.resolution.width;
-      out_info->height      = output.resolution.height;
-      out_info->refreshRate = output.refreshRate;
-      out_info->isPrimary   = output.isPrimary;
+      const DisplayInfo& output = result.value();
+      out_info->id              = output.id;
+      out_info->width           = output.resolution.width;
+      out_info->height          = output.resolution.height;
+      out_info->refreshRate     = output.refreshRate;
+      out_info->isPrimary       = output.isPrimary;
       return DRAC_SUCCESS;
     }
 
@@ -532,13 +546,13 @@ extern "C" {
       Span<DracNetworkInterface> outItems(out_list->items, out_list->count);
       usize                      idx = 0;
       for (DracNetworkInterface& dst : outItems) {
-        NetworkInterface& src = ifaces[idx++];
-        dst.name              = DupString(src.name);
-        dst.ipv4Address       = DupOptionalString(src.ipv4Address);
-        dst.ipv6Address       = DupOptionalString(src.ipv6Address);
-        dst.macAddress        = DupOptionalString(src.macAddress);
-        dst.isUp              = src.isUp;
-        dst.isLoopback        = src.isLoopback;
+        const NetworkInterface& src = ifaces.at(idx++);
+        dst.name                    = DupString(src.name);
+        dst.ipv4Address             = DupOptionalString(src.ipv4Address);
+        dst.ipv6Address             = DupOptionalString(src.ipv6Address);
+        dst.macAddress              = DupOptionalString(src.macAddress);
+        dst.isUp                    = src.isUp;
+        dst.isLoopback              = src.isLoopback;
       }
       return DRAC_SUCCESS;
     }
@@ -553,13 +567,13 @@ extern "C" {
     Result<NetworkInterface> result = GetPrimaryNetworkInterface(mgr->inner);
 
     if (result.has_value()) {
-      NetworkInterface& iface = result.value();
-      out_iface->name         = DupString(iface.name);
-      out_iface->ipv4Address  = DupOptionalString(iface.ipv4Address);
-      out_iface->ipv6Address  = DupOptionalString(iface.ipv6Address);
-      out_iface->macAddress   = DupOptionalString(iface.macAddress);
-      out_iface->isUp         = iface.isUp;
-      out_iface->isLoopback   = iface.isLoopback;
+      const NetworkInterface& iface = result.value();
+      out_iface->name               = DupString(iface.name);
+      out_iface->ipv4Address        = DupOptionalString(iface.ipv4Address);
+      out_iface->ipv6Address        = DupOptionalString(iface.ipv6Address);
+      out_iface->macAddress         = DupOptionalString(iface.macAddress);
+      out_iface->isUp               = iface.isUp;
+      out_iface->isLoopback         = iface.isLoopback;
       return DRAC_SUCCESS;
     }
 
@@ -598,18 +612,8 @@ extern "C" {
     bool                 ownsInstance;
   };
 
-  static std::once_flag s_staticPluginInitFlag;
-  static size_t         s_staticPluginCount = 0;
-
-  auto DracInitStaticPlugins_CAPI(void) -> size_t {
-    std::call_once(s_staticPluginInitFlag, []() {
-      s_staticPluginCount = static_cast<size_t>(::draconis::core::plugin::DracInitStaticPlugins());
-    });
-    return s_staticPluginCount;
-  }
-
   auto DracInitStaticPlugins(void) -> size_t {
-    return DracInitStaticPlugins_CAPI();
+    return InitStaticPluginsForCAPI();
   }
 
   auto DracInitPluginManager(void) -> void {
@@ -642,14 +646,14 @@ extern "C" {
   }
 
   auto DracDiscoverPlugins(void) -> DracPluginInfoList {
-    return { nullptr, 0 };
+    return { .items = nullptr, .count = 0 };
   }
 
   auto DracLoadPlugin(const char* pluginId) -> DracPlugin* {
     if (!pluginId)
       return nullptr;
 
-    (void)DracInitStaticPlugins_CAPI();
+    (void)InitStaticPluginsForCAPI();
 
     String name(pluginId);
 
@@ -665,7 +669,7 @@ extern "C" {
         return nullptr;
       }
 
-      return new DracPlugin { infoPlugin, std::move(name), true };
+      return new DracPlugin { .inner = infoPlugin, .name = std::move(name), .ownsInstance = true };
     }
 
   #if DRAC_PRECOMPILED_CONFIG
@@ -691,15 +695,16 @@ extern "C" {
     if (!path)
       return nullptr;
 
-    std::filesystem::path pluginPath(path);
-    auto                  parentDir = pluginPath.parent_path();
-    auto                  stem      = pluginPath.stem().string();
+    const std::filesystem::path pluginPath(path);
+    auto                        parentDir = pluginPath.parent_path();
+    auto                        stem      = pluginPath.stem().string();
 
     auto& mgr = GetPluginManager();
     mgr.addSearchPath(parentDir);
 
     // Discover plugins in the new search path
-    (void)mgr.scanForPlugins();
+    if (auto scanResult = mgr.scanForPlugins(); !scanResult)
+      return nullptr;
 
     CacheManager cache;
     auto         result = mgr.loadPlugin(stem, cache);
@@ -711,7 +716,7 @@ extern "C" {
     if (!opt.has_value())
       return nullptr;
 
-    return new DracPlugin { *opt, std::move(stem), false };
+    return new DracPlugin { .inner = *opt, .name = std::move(stem), .ownsInstance = false };
   }
 
   auto DracUnloadPlugin(DracPlugin* plugin) -> void {
@@ -719,7 +724,7 @@ extern "C" {
       return;
 
     if (plugin->ownsInstance && plugin->inner) {
-      IPlugin* basePlugin = dynamic_cast<IPlugin*>(plugin->inner);
+      auto* basePlugin = dynamic_cast<IPlugin*>(plugin->inner);
       if (basePlugin) {
         DestroyStaticPlugin(plugin->name, basePlugin);
       }
@@ -731,9 +736,9 @@ extern "C" {
     if (!plugin || !plugin->inner || !cache)
       return DRAC_ERROR_INVALID_ARGUMENT;
 
-    PluginContext ctx;
-    PluginCache   pluginCache(std::filesystem::temp_directory_path() / "draconis_plugins");
-    Result<Unit>  result = plugin->inner->initialize(ctx, pluginCache);
+    const PluginContext ctx;
+    PluginCache         pluginCache(std::filesystem::temp_directory_path() / "draconis_plugins");
+    Result<Unit>        result = plugin->inner->initialize(ctx, pluginCache);
 
     if (result.has_value())
       return DRAC_SUCCESS;
@@ -784,20 +789,21 @@ extern "C" {
   }
 
   auto DracPluginGetFields(DracPlugin* plugin) -> DracPluginFieldList {
-    DracPluginFieldList result = { nullptr, 0 };
+    DracPluginFieldList result = { .items = nullptr, .count = 0 };
 
     if (!plugin || !plugin->inner)
       return result;
 
-    PluginFields fields = plugin->inner->getFields();
-    result.count        = fields.size();
-    result.items        = new DracPluginField[fields.size()];
+    const PluginFields fields = plugin->inner->getFields();
+    result.count              = fields.size();
+    result.items              = new DracPluginField[fields.size()];
 
-    size_t idx = 0;
+    const Span<DracPluginField> items(result.items, result.count);
+    size_t                      idx = 0;
     for (const auto& [key, value] : fields) {
-      result.items[idx].key   = DupString(key);
-      result.items[idx].value = ToCPluginFieldValue(value);
-      ++idx;
+      DracPluginField& item = items.subspan(idx++).front();
+      item.key              = DupString(key);
+      item.value            = ToCPluginFieldValue(value);
     }
 
     return result;
@@ -818,9 +824,9 @@ extern "C" {
     if (!list || !list->items)
       return;
 
-    for (size_t i = 0; i < list->count; ++i) {
-      delete[] list->items[i].key;
-      FreePluginFieldValue(list->items[i].value);
+    for (DracPluginField& item : Span(list->items, list->count)) {
+      delete[] item.key;
+      FreePluginFieldValue(item.value);
     }
 
     delete[] list->items;
@@ -832,11 +838,11 @@ extern "C" {
     if (!list || !list->items)
       return;
 
-    for (size_t i = 0; i < list->count; ++i) {
-      delete[] list->items[i].name;
-      delete[] list->items[i].version;
-      delete[] list->items[i].author;
-      delete[] list->items[i].description;
+    for (const DracPluginInfo& item : Span(list->items, list->count)) {
+      delete[] item.name;
+      delete[] item.version;
+      delete[] item.author;
+      delete[] item.description;
     }
 
     delete[] list->items;

@@ -102,15 +102,17 @@ auto main() -> int {
     CacheManager cache;
     std::barrier fetchBarrier(2);
     const auto   policy = CachePolicy::inMemory();
-    const auto   fetch  = [&fetchBarrier](const i32 value) {
-      return [&fetchBarrier, value]() -> Result<i32> {
-        fetchBarrier.arrive_and_wait();
-        return value;
-      };
+    const auto firstFetch = [&fetchBarrier]() -> Result<i32> {
+      fetchBarrier.arrive_and_wait();
+      return 1;
+    };
+    const auto secondFetch = [&fetchBarrier]() -> Result<i32> {
+      fetchBarrier.arrive_and_wait();
+      return 2;
     };
 
-    auto first  = std::async(std::launch::async, [&] { return cache.getOrSet<i32>("concurrent_key_a", policy, fetch(1)); });
-    auto second = std::async(std::launch::async, [&] { return cache.getOrSet<i32>("concurrent_key_b", policy, fetch(2)); });
+    auto first  = std::async(std::launch::async, [&] -> types::Result<int> { return cache.getOrSet<i32>("concurrent_key_a", policy, firstFetch); });
+    auto second = std::async(std::launch::async, [&] -> types::Result<int> { return cache.getOrSet<i32>("concurrent_key_b", policy, secondFetch); });
 
     expect(*first.get() == 1_i);
     expect(*second.get() == 2_i);

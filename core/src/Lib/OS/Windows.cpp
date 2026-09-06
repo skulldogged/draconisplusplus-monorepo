@@ -25,6 +25,7 @@
   #endif
 
   #include <dxgi.h>       // IDXGIFactory, IDXGIAdapter, DXGI_ADAPTER_DESC
+  #include <limits>       // std::numeric_limits
   #include <ranges>       // std::ranges::find_if, std::ranges::views::transform
   #include <sysinfoapi.h> // GetLogicalProcessorInformationEx, RelationProcessorCore, PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX, KAFFINITY
   #include <tlhelp32.h>   // CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS
@@ -261,8 +262,8 @@ namespace {
       }
 
       static auto getInstance() -> const RegistryCache& {
-        static RegistryCache Instance;
-        return Instance;
+        static const RegistryCache INSTANCE;
+        return INSTANCE;
       }
 
       [[nodiscard]] auto getCurrentVersionKey() const -> HKEY {
@@ -293,8 +294,8 @@ namespace {
       };
 
       static auto getInstance() -> const OsVersionCache& {
-        static OsVersionCache Instance;
-        return Instance;
+        static const OsVersionCache INSTANCE;
+        return INSTANCE;
       }
 
       [[nodiscard]] auto getVersionData() const -> const Result<VersionData>&;
@@ -350,7 +351,7 @@ namespace {
   #endif
         // Use Structured Exception Handling (SEH) to safely read the version data. In case of invalid
         // pointers, this will catch the access violation and return an Error, instead of crashing.
-  #if defined(_MSC_VER)
+  #ifdef _MSC_VER
         __try {
   #endif
           // Read the version data directly from the calculated memory addresses.
@@ -362,7 +363,7 @@ namespace {
           result.buildNumber  = *reinterpret_cast<const volatile u32*>(kuserSharedNtBuildNumber);
           // NOLINTEND(*-pro-type-reinterpret-cast, *-no-int-to-ptr)
           result.success = true;
-  #if defined(_MSC_VER)
+  #ifdef _MSC_VER
         } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
           // If an access violation occurs, then the shared memory couldn't be properly read.
           result.success = false;
@@ -380,7 +381,7 @@ namespace {
       // that it's inherently risky/unsafe, and could break in future updates. To mitigate this risk,
       // the SEH helper function handles potential exceptions and returns a POD struct.
       OsVersionCache() {
-        VersionReadResult readResult = readVersionDataSEH();
+        const VersionReadResult readResult = readVersionDataSEH();
 
         if (readResult.success) {
           m_versionData = VersionData {
@@ -457,11 +458,11 @@ namespace {
         bool initSuccess = false;
 
         // Use std::call_once for thread-safe initialization
-        std::call_once(m_initFlag, [this, &initSuccess]() {
+        std::call_once(m_initFlag, [this, &initSuccess]() -> void {
           debug_log("ProcessTreeCache: Starting initialization...");
 
           // Use the Toolhelp32Snapshot API to get a snapshot of all running processes.
-          HandleWrapper<HANDLE> hSnap(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0));
+          const HandleWrapper<HANDLE> hSnap(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0));
 
           if (!hSnap) {
             debug_log("ProcessTreeCache: CreateToolhelp32Snapshot failed, error: {}", GetLastError());
@@ -482,7 +483,7 @@ namespace {
 
           while (true) {
             // Extract the executable name from the full path.
-            WStringView exeFileView(pe32.szExeFile);
+            const WStringView exeFileView(pe32.szExeFile);
 
             // Find the last backslash to get just the executable name.
             const usize start = exeFileView.find_last_of(L'\\') != WStringView::npos ? exeFileView.find_last_of(L'\\') + 1 : 0;
@@ -495,10 +496,10 @@ namespace {
               stemView = stemView.substr(0, stemView.size() - 4);
 
             WString baseName(stemView);
-            std::ranges::transform(baseName, baseName.begin(), [](const WCStr character) { return towlower(character); });
+            std::ranges::transform(baseName, baseName.begin(), [](const WCStr character) -> wint_t { return towlower(character); });
 
             if (const Result<String> baseNameUTF8 = helpers::ConvertWStringToUTF8(baseName))
-              processMap[pe32.th32ProcessID] = Data { .parentPid = pe32.th32ParentProcessID, .baseExeNameLower = *baseNameUTF8 };
+              processMap.insert_or_assign(pe32.th32ProcessID, Data { .parentPid = pe32.th32ParentProcessID, .baseExeNameLower = *baseNameUTF8 });
 
             if (!Process32NextW(hSnap.get(), &pe32))
               break;
@@ -506,7 +507,7 @@ namespace {
 
           // Atomic update of the process map
           {
-            LockGuard lock(m_processMutex);
+            const std::scoped_lock lock(m_processMutex);
             m_processMap = std::move(processMap);
           }
 
@@ -523,7 +524,7 @@ namespace {
       }
 
       auto getProcessMap() const -> const UnorderedMap<DWORD, Data>& {
-        LockGuard lock(m_processMutex);
+        const std::scoped_lock lock(m_processMutex);
         return m_processMap;
       }
 
@@ -580,7 +581,7 @@ namespace {
         // and return its friendly-name counterpart if it is.
         if (
           const auto mapIter =
-            std::ranges::find_if(shellMap, [&](const Pair<StringView, StringView>& pair) { return StringView { processName } == pair.first; });
+            std::ranges::find_if(shellMap, [&](const Pair<StringView, StringView>& pair) -> auto { return StringView { processName } == pair.first; });
           mapIter != std::ranges::end(shellMap)
         ) {
           debug_log("FindShellInProcessTree: Found shell: {}", mapIter->second);
@@ -605,7 +606,7 @@ namespace {
     disk.mountPoint = driveRoot;
 
     // Get drive type
-    UINT driveType = GetDriveTypeA(driveRoot.c_str());
+    UINT const driveType = GetDriveTypeA(driveRoot.c_str());
     switch (driveType) {
       case DRIVE_FIXED:
         disk.driveType = "Fixed";
@@ -648,10 +649,10 @@ namespace {
     // Get system drive for comparison
     Array<char, MAX_PATH> systemDir = {};
     GetSystemDirectoryA(systemDir.data(), MAX_PATH);
-    char systemDrive = systemDir.front();
+    const char systemDrive = systemDir.front();
 
     // Check if this is the system drive
-    disk.isSystemDrive = (driveRoot[0] == systemDrive);
+    disk.isSystemDrive = (driveRoot.front() == systemDrive);
 
     return disk;
   }
@@ -715,9 +716,9 @@ namespace draconis::core::system {
       // Append the display version if it exists.
       WString displayVersion = TRY(GetRegistryValue(currentVersionKey, DISPLAY_VERSION));
 
-      String productNameUTF8 = TRY(ConvertWStringToUTF8(productName));
+      const String productNameUTF8 = TRY(ConvertWStringToUTF8(productName));
 
-      String displayVersionUTF8 = TRY(ConvertWStringToUTF8(displayVersion));
+      const String displayVersionUTF8 = TRY(ConvertWStringToUTF8(displayVersion));
 
       return OSInfo(productNameUTF8, displayVersionUTF8, "windows");
     });
@@ -731,7 +732,7 @@ namespace draconis::core::system {
       if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"HARDWARE\\DESCRIPTION\\System\\BIOS", 0, KEY_READ, &biosKey) != ERROR_SUCCESS)
         ERR(NotFound, "Failed to open BIOS registry key");
 
-      RegistryKey biosKeyGuard(biosKey);
+      const RegistryKey biosKeyGuard(biosKey);
 
       // Try SystemFamily first (e.g., "ASUS TUF Gaming F15"), then fall back to SystemProductName
       if (Result<WString> systemFamily = GetRegistryValue(biosKey, SYSTEM_FAMILY); systemFamily)
@@ -780,7 +781,7 @@ namespace draconis::core::system {
       // Windows doesn't really have the concept of a desktop environment,
       // so our next best bet is just displaying the UI design based on the build number.
 
-      u64 build = TRY(OsVersionCache::getInstance().getBuildNumber());
+      const u64 build = TRY(OsVersionCache::getInstance().getBuildNumber());
 
       if (build >= 15063)
         return "Fluent";
@@ -813,7 +814,7 @@ namespace draconis::core::system {
           const usize lastSlash = shellPath.find_last_of("\\/");
           String      shellExe  = (lastSlash != String::npos) ? shellPath.substr(lastSlash + 1) : shellPath;
 
-          std::ranges::transform(shellExe, shellExe.begin(), [](const u8 character) { return std::tolower(character); });
+          std::ranges::transform(shellExe, shellExe.begin(), [](const u8 character) -> int { return std::tolower(character); });
 
           // Remove the .exe extension if it exists.
           if (shellExe.ends_with(".exe"))
@@ -870,7 +871,7 @@ namespace draconis::core::system {
   auto GetDisks(CacheManager& cache) -> Result<Vec<DiskInfo>> {
     Array<char, MAX_PATH> drives = {};
 
-    DWORD size = GetLogicalDriveStringsA(MAX_PATH, drives.data());
+    DWORD const size = GetLogicalDriveStringsA(MAX_PATH, drives.data());
 
     if (size == 0)
       ERR(IoError, "Failed to get logical drive strings");
@@ -898,8 +899,8 @@ namespace draconis::core::system {
     if (GetSystemDirectoryA(systemDir.data(), MAX_PATH) == 0)
       ERR(IoError, "Failed to get system directory");
 
-    char   systemDrive = systemDir.front();
-    String driveStr    = String(1, systemDrive) + ":\\";
+    const char   systemDrive = systemDir.front();
+    const String driveStr    = String(1, systemDrive) + ":\\";
 
     return GetDiskInfoForDrive(driveStr, cache);
   }
@@ -908,15 +909,15 @@ namespace draconis::core::system {
     if (path.empty())
       ERR(InvalidArgument, "Path cannot be empty");
 
-    char driveLetter = path[0];
-    if (path.length() >= 2 && path[1] == ':') {
-      driveLetter = path[0];
+    char driveLetter = '\0';
+    if (path.length() >= 2 && path.at(1) == ':') {
+      driveLetter = path.front();
     } else {
       Array<char, MAX_PATH> cwd = {};
       if (GetCurrentDirectoryA(MAX_PATH, cwd.data()) == 0)
         ERR(IoError, "Failed to get current directory");
 
-      driveLetter = cwd[0];
+      driveLetter = cwd.front();
     }
 
     if (driveLetter >= 'a' && driveLetter <= 'z') {
@@ -924,7 +925,7 @@ namespace draconis::core::system {
       driveLetter    = static_cast<char>(temp);
     }
 
-    String driveRoot = String(1, driveLetter) + ":\\";
+    const String driveRoot = String(1, driveLetter) + ":\\";
 
     return GetDiskInfoForDrive(driveRoot, cache);
   }
@@ -958,11 +959,11 @@ namespace draconis::core::system {
         // Use __cpuidex to avoid conflict with Clang's __cpuid macro from cpuid.h
         __cpuidex(cpuInfo.data(), static_cast<i32>(0x80000000), 0);
   #else
-        __cpuid(0x80000000, cpuInfo[0], cpuInfo[1], cpuInfo[2], cpuInfo[3]);
+        __cpuid(0x80000000, cpuInfo.at(0), cpuInfo.at(1), cpuInfo.at(2), cpuInfo.at(3));
   #endif
 
         // We must have extended functions support (functions up to 0x80000004).
-        if (const u32 maxFunction = cpuInfo[0]; maxFunction >= 0x80000004) {
+        if (const u32 maxFunction = cpuInfo.at(0); maxFunction >= 0x80000004) {
           // Retrieve the brand string in three 16-byte parts.
           for (u32 i = 0; i < 3; i++) {
             // Call leaves 0x80000002, 0x80000003, and 0x80000004. Each call
@@ -971,7 +972,7 @@ namespace draconis::core::system {
             // Use __cpuidex to avoid conflict with Clang's __cpuid macro from cpuid.h
             __cpuidex(cpuInfo.data(), static_cast<i32>(0x80000002 + i), 0);
   #else
-            __cpuid(0x80000002 + i, cpuInfo[0], cpuInfo[1], cpuInfo[2], cpuInfo[3]);
+            __cpuid(0x80000002 + i, cpuInfo.at(0), cpuInfo.at(1), cpuInfo.at(2), cpuInfo.at(3));
   #endif
 
             // Copy the chunk into the brand string buffer.
@@ -1035,15 +1036,15 @@ namespace draconis::core::system {
       if (GetLogicalProcessorInformationEx(RelationProcessorCore, reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buffer.data()), &bufferSize) == FALSE)
         ERR_FMT(ApiUnavailable, "GetLogicalProcessorInformationEx (data retrieval) failed with error code {}", GetLastError());
 
-      DWORD      physicalCores = 0;
-      DWORD      offset        = 0;
-      Span<BYTE> bufferSpan(buffer);
+      DWORD            physicalCores = 0;
+      DWORD            offset        = 0;
+      const Span<BYTE> bufferSpan(buffer);
 
       while (offset < bufferSize) {
         physicalCores++;
 
         // NOLINTNEXTLINE(*-pro-type-reinterpret-cast)
-        const auto* current = reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(&bufferSpan[offset]);
+        const auto* current = reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(&bufferSpan.subspan(offset).front());
         offset += current->Size;
       }
 
@@ -1114,7 +1115,7 @@ namespace draconis::core::system {
     // NOLINTBEGIN(*-pro-type-union-access)
     for (const DISPLAYCONFIG_PATH_INFO& path : paths) {
       if (path.flags & DISPLAYCONFIG_PATH_ACTIVE) {
-        const DISPLAYCONFIG_MODE_INFO& mode = modes[path.targetInfo.modeInfoIdx];
+        const DISPLAYCONFIG_MODE_INFO& mode = modes.at(path.targetInfo.modeInfoIdx);
 
         if (mode.infoType != DISPLAYCONFIG_MODE_INFO_TYPE_TARGET)
           continue;
@@ -1288,7 +1289,7 @@ namespace draconis::core::system {
               pCurrAddresses->PhysicalAddress[5]
             );
 
-          for (IP_ADAPTER_UNICAST_ADDRESS* pUnicast = pCurrAddresses->FirstUnicastAddress; pUnicast != nullptr; pUnicast = pUnicast->Next)
+          for (IP_ADAPTER_UNICAST_ADDRESS const* pUnicast = pCurrAddresses->FirstUnicastAddress; pUnicast != nullptr; pUnicast = pUnicast->Next)
             if (pUnicast->Address.lpSockaddr->sa_family == AF_INET) {
               // NOLINTNEXTLINE(*-pro-type-reinterpret-cast)
               auto* saIn = reinterpret_cast<sockaddr_in*>(pUnicast->Address.lpSockaddr);
@@ -1338,7 +1339,7 @@ namespace draconis::core::system {
     return Battery(
       status,
       percentage,
-      powerStatus.BatteryFullLifeTime == static_cast<DWORD>(-1)
+      powerStatus.BatteryFullLifeTime == std::numeric_limits<DWORD>::max()
         ? None
         : Some(std::chrono::seconds(powerStatus.BatteryFullLifeTime))
     );

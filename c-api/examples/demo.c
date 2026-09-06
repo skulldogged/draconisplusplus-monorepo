@@ -1,3 +1,5 @@
+#include <inttypes.h>
+#include <stdint.h>
 #include <stdio.h>
 
 #include "../include/draconis_c.h"
@@ -6,20 +8,20 @@ int main(void) {
   DracCacheManager* mgr = DracCreateCacheManager();
 
   if (!mgr) {
-    (void)fprintf(stderr, "Failed to create cache manager!\n");
+    (void)fputs("Failed to create cache manager!\n", stderr);
     return 1;
   }
 
   printf("=== System Information ===\n\n");
 
   uint64_t uptime = DracGetUptime();
-  printf("Uptime: %lu seconds\n", uptime);
+  printf("Uptime: %" PRIu64 " seconds\n", uptime);
 
   DracResourceUsage memInfo;
 
   if (DracGetMemInfo(mgr, &memInfo) == DRAC_SUCCESS) {
     printf(
-      "Memory: %lu / %lu bytes used\n",
+      "Memory: %" PRIu64 " / %" PRIu64 " bytes used\n",
       memInfo.usedBytes,
       memInfo.totalBytes
     );
@@ -117,7 +119,7 @@ int main(void) {
 
   if (DracGetDiskUsage(mgr, &diskUsage) == DRAC_SUCCESS) {
     printf(
-      "Total Disk Usage: %lu / %lu bytes\n",
+      "Total Disk Usage: %" PRIu64 " / %" PRIu64 " bytes\n",
       diskUsage.usedBytes,
       diskUsage.totalBytes
     );
@@ -129,7 +131,7 @@ int main(void) {
 
   if (DracGetSystemDisk(mgr, &sysDisk) == DRAC_SUCCESS) {
     printf(
-      "System Disk: %s (%s) at %s - %lu / %lu bytes\n",
+      "System Disk: %s (%s) at %s - %" PRIu64 " / %" PRIu64 " bytes\n",
       sysDisk.name,
       sysDisk.filesystem,
       sysDisk.mountPoint,
@@ -150,7 +152,7 @@ int main(void) {
       DracDiskInfo* disk = &disks.items[i];
 
       printf(
-        "  - %s (%s) at %s: %lu / %lu bytes%s\n",
+        "  - %s (%s) at %s: %" PRIu64 " / %" PRIu64 " bytes%s\n",
         disk->name,
         disk->filesystem,
         disk->mountPoint,
@@ -170,7 +172,7 @@ int main(void) {
 
   if (DracGetPrimaryOutput(mgr, &primaryDisplay) == DRAC_SUCCESS) {
     printf(
-      "Primary Display: %lux%lu @ %.2f Hz\n",
+      "Primary Display: %" PRIu64 "x%" PRIu64 " @ %.2f Hz\n",
       primaryDisplay.width,
       primaryDisplay.height,
       primaryDisplay.refreshRate
@@ -188,7 +190,7 @@ int main(void) {
       DracDisplayInfo* display = &displays.items[i];
 
       printf(
-        "  - Display %lu: %lux%lu @ %.2f Hz%s\n",
+        "  - Display %" PRIu64 ": %" PRIu64 "x%" PRIu64 " @ %.2f Hz%s\n",
         display->id,
         display->width,
         display->height,
@@ -262,7 +264,7 @@ int main(void) {
       printf("Battery Percentage: %u%%\n", battery.percentage);
 
     if (battery.timeRemainingSecs >= 0)
-      printf("Time Remaining: %ld seconds\n", battery.timeRemainingSecs);
+      printf("Time Remaining: %" PRId64 " seconds\n", battery.timeRemainingSecs);
   } else {
     printf("Battery: N/A\n");
   }

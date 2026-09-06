@@ -50,7 +50,7 @@ auto main() -> int {
   };
 
   "None constant"_test = [] -> void {
-    Option<i32> opt = None;
+    const Option<i32> opt = None;
 
     expect(!opt.has_value());
   };

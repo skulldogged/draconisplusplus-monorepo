@@ -116,28 +116,28 @@ namespace draconis::ui {
 
   constexpr inline Icons ICON_TYPE = NERD;
 
-  struct RowInfo {
-    String   icon;
-    String   label;
-    String   value;
-    LogColor color    = LogColor::White;
-    bool     autoWrap = false;
-  };
-
-  struct UIGroup {
-    Vec<RowInfo>  rows;
-    Vec<usize>    iconWidths;
-    Vec<usize>    labelWidths;
-    Vec<usize>    valueWidths;
-    Vec<String>   coloredIcons;
-    Vec<String>   coloredLabels;
-    Vec<String>   coloredValues;
-    Vec<bool>     autoWraps;
-    Vec<LogColor> valueColors;
-    usize         maxLabelWidth = 0;
-  };
-
   namespace {
+    struct RowInfo {
+      String   icon;
+      String   label;
+      String   value;
+      LogColor color    = LogColor::White;
+      bool     autoWrap = false;
+    };
+
+    struct UIGroup {
+      Vec<RowInfo>  rows;
+      Vec<usize>    iconWidths;
+      Vec<usize>    labelWidths;
+      Vec<usize>    valueWidths;
+      Vec<String>   coloredIcons;
+      Vec<String>   coloredLabels;
+      Vec<String>   coloredValues;
+      Vec<bool>     autoWraps;
+      Vec<LogColor> valueColors;
+      usize         maxLabelWidth = 0;
+    };
+
     struct LogoRender {
       Vec<String> lines;    // ASCII art lines when using ascii logos
       String      sequence; // Escape sequence when using inline image logos
@@ -221,9 +221,9 @@ namespace draconis::ui {
       usize idx = 0;
 
       while (idx + 2 < data.size()) {
-        const u32 triple = (static_cast<u32>(data[idx]) << 16) |
-          (static_cast<u32>(data[idx + 1]) << 8) |
-          static_cast<u32>(data[idx + 2]);
+        const u32 triple = (static_cast<u32>(data.subspan(idx).front()) << 16) |
+          (static_cast<u32>(data.subspan(idx + 1).front()) << 8) |
+          static_cast<u32>(data.subspan(idx + 2).front());
 
         out.push_back(BASE64_TABLE.at((triple >> 18) & 0x3F));
         out.push_back(BASE64_TABLE.at((triple >> 12) & 0x3F));
@@ -236,14 +236,14 @@ namespace draconis::ui {
       const usize remaining = data.size() - idx;
 
       if (remaining == 1) {
-        const u32 triple = static_cast<u32>(data[idx]) << 16;
+        const u32 triple = static_cast<u32>(data.subspan(idx).front()) << 16;
         out.push_back(BASE64_TABLE.at((triple >> 18) & 0x3F));
         out.push_back(BASE64_TABLE.at((triple >> 12) & 0x3F));
         out.push_back('=');
         out.push_back('=');
       } else if (remaining == 2) {
-        const u32 triple = (static_cast<u32>(data[idx]) << 16) |
-          (static_cast<u32>(data[idx + 1]) << 8);
+        const u32 triple = (static_cast<u32>(data.subspan(idx).front()) << 16) |
+          (static_cast<u32>(data.subspan(idx + 1).front()) << 8);
         out.push_back(BASE64_TABLE.at((triple >> 18) & 0x3F));
         out.push_back(BASE64_TABLE.at((triple >> 12) & 0x3F));
         out.push_back(BASE64_TABLE.at((triple >> 6) & 0x3F));
@@ -302,7 +302,7 @@ namespace draconis::ui {
     }
 
     // Detect if the terminal supports inline image rendering (Kitty/iTerm2 protocols).
-    auto SupportsInlineImages(LogoProtocol protocol) -> bool {
+    auto SupportsInlineImages([[maybe_unused]] LogoProtocol protocol) -> bool {
 #ifdef _WIN32
       // Windows terminals generally don't support inline images via these protocols
       return false;
@@ -374,10 +374,10 @@ namespace draconis::ui {
       if (std::equal(pngSig.begin(), pngSig.end(), header.begin())) {
         // IHDR starts at byte 16
         const auto be32 = [](Span<const u8> data, usize offset) -> usize {
-          return (static_cast<usize>(data[offset]) << 24) |
-            (static_cast<usize>(data[offset + 1]) << 16) |
-            (static_cast<usize>(data[offset + 2]) << 8) |
-            static_cast<usize>(data[offset + 3]);
+          return (static_cast<usize>(data.subspan(offset).front()) << 24) |
+            (static_cast<usize>(data.subspan(offset + 1).front()) << 16) |
+            (static_cast<usize>(data.subspan(offset + 2).front()) << 8) |
+            static_cast<usize>(data.subspan(offset + 3).front());
         };
 
         return ImageSize {
@@ -387,12 +387,12 @@ namespace draconis::ui {
       }
 
       // JPEG SOF parsing
-      if (header[0] == 0xFF && header[1] == 0xD8) {
+      if (header.at(0) == 0xFF && header.at(1) == 0xD8) {
         file.clear();
         file.seekg(2, std::ios::beg);
 
         while (file) {
-          int markerPrefix = file.get();
+          const int markerPrefix = file.get();
           if (markerPrefix != 0xFF)
             break;
           int marker = file.get();
@@ -407,7 +407,7 @@ namespace draconis::ui {
           file.read(reinterpret_cast<char*>(lenBytes.data()), 2); // NOLINT
           if (!file)
             break;
-          const usize segLen = (static_cast<usize>(lenBytes[0]) << 8) | static_cast<usize>(lenBytes[1]);
+          const usize segLen = (static_cast<usize>(lenBytes.at(0)) << 8) | static_cast<usize>(lenBytes.at(1));
           if (segLen < 2)
             break;
 
@@ -417,8 +417,8 @@ namespace draconis::ui {
             file.read(reinterpret_cast<char*>(sof.data()), 5); // NOLINT
             if (!file)
               break;
-            const usize height = (static_cast<usize>(sof[1]) << 8) | static_cast<usize>(sof[2]);
-            const usize width  = (static_cast<usize>(sof[3]) << 8) | static_cast<usize>(sof[4]);
+            const usize height = (static_cast<usize>(sof.at(1)) << 8) | static_cast<usize>(sof.at(2));
+            const usize width  = (static_cast<usize>(sof.at(3)) << 8) | static_cast<usize>(sof.at(4));
             if (height > 0 && width > 0)
               return ImageSize { .width = width, .height = height };
             break;
@@ -539,11 +539,11 @@ namespace draconis::ui {
       if (const Option<ImageSize> imgSize = ProbeImageSize(*logoCfg.imagePath)) {
         const double aspect = imgSize->height == 0 ? 1.0 : static_cast<double>(imgSize->width) / static_cast<double>(imgSize->height);
 
-        if (logoWidthPx == 0 && logoHeightPx > 0)
+        if (logoWidthPx == 0 && logoHeightPx > 0) {
           logoWidthPx = std::max<usize>(1, static_cast<usize>(std::llround(aspect * static_cast<double>(logoHeightPx))));
-        else if (logoHeightPx == 0 && logoWidthPx > 0)
+        } else if (logoHeightPx == 0 && logoWidthPx > 0) {
           logoHeightPx = std::max<usize>(1, static_cast<usize>(std::llround(static_cast<double>(logoWidthPx) / aspect)));
-        else if (logoWidthPx == 0 && logoHeightPx == 0) {
+        } else if (logoWidthPx == 0 && logoHeightPx == 0) {
           logoWidthPx  = imgSize->width;
           logoHeightPx = imgSize->height;
         }
@@ -705,7 +705,7 @@ namespace draconis::ui {
         return 0;
 
       const auto getByte = [&](usize index) -> u8 {
-        return static_cast<u8>(str[index]);
+        return static_cast<u8>(str.at(index));
       };
 
       const u8 first = getByte(pos++);
@@ -755,7 +755,7 @@ namespace draconis::ui {
       usize pos      = 0;
 
       while (pos < str.length()) {
-        const char current = str[pos];
+        const char current = str.at(pos);
 
         if (inEscape) {
           if (current == 'm' || current == '\\' || current == '\a')
@@ -793,11 +793,11 @@ namespace draconis::ui {
       Vec<StringView> words;
       Vec<usize>      wordWidths;
       for (usize pos = 0; pos < text.size();) {
-        while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos])) != 0)
+        while (pos < text.size() && std::isspace(static_cast<unsigned char>(text.at(pos))) != 0)
           ++pos;
 
         const usize wordStart = pos;
-        while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos])) == 0)
+        while (pos < text.size() && std::isspace(static_cast<unsigned char>(text.at(pos))) == 0)
           ++pos;
 
         if (pos > wordStart) {
@@ -813,13 +813,13 @@ namespace draconis::ui {
       // Prefix sums make every candidate line-width query constant-time.
       Vec<usize> prefixWidth(words.size() + 1, 0);
       for (usize idx = 0; idx < words.size(); ++idx)
-        prefixWidth[idx + 1] = prefixWidth[idx] + wordWidths[idx];
+        prefixWidth.at(idx + 1) = prefixWidth.at(idx) + wordWidths.at(idx);
 
       // Helper to get width of words[start..end) with spaces
       auto getLineWidth = [&](usize start, usize end) -> usize {
         if (start >= end)
           return 0;
-        return prefixWidth[end] - prefixWidth[start] + end - start - 1;
+        return prefixWidth.at(end) - prefixWidth.at(start) + end - start - 1;
       };
 
       // Do greedy wrap first to determine minimum number of lines needed
@@ -827,10 +827,10 @@ namespace draconis::ui {
       greedyBreaks.push_back(0);
       usize currentWidth = 0;
       for (usize idx = 0; idx < words.size(); ++idx) {
-        const usize addedWidth = wordWidths[idx] + (currentWidth > 0 ? 1 : 0);
+        const usize addedWidth = wordWidths.at(idx) + (currentWidth > 0 ? 1 : 0);
         if (currentWidth > 0 && currentWidth + addedWidth > wrapWidth) {
           greedyBreaks.push_back(idx);
-          currentWidth = wordWidths[idx];
+          currentWidth = wordWidths.at(idx);
         } else {
           currentWidth += addedWidth;
         }
@@ -844,7 +844,7 @@ namespace draconis::ui {
         for (usize idx = 0; idx < words.size(); ++idx) {
           if (idx > 0)
             line += " ";
-          line += words[idx];
+          line += words.at(idx);
         }
         lines.push_back(line);
         return lines;
@@ -877,12 +877,12 @@ namespace draconis::ui {
         for (usize idx = 0; idx < bestBreak; ++idx) {
           if (idx > 0)
             line1 += " ";
-          line1 += words[idx];
+          line1 += words.at(idx);
         }
         for (usize idx = bestBreak; idx < words.size(); ++idx) {
           if (idx > bestBreak)
             line2 += " ";
-          line2 += words[idx];
+          line2 += words.at(idx);
         }
         lines.push_back(line1);
         lines.push_back(line2);
@@ -899,7 +899,7 @@ namespace draconis::ui {
       usize linesLeft = numLines;
 
       for (usize idx = 0; idx < words.size(); ++idx) {
-        const usize widthIfAdded        = currentWidth + wordWidths[idx] + (currentWidth > 0 ? 1 : 0);
+        const usize widthIfAdded        = currentWidth + wordWidths.at(idx) + (currentWidth > 0 ? 1 : 0);
         const usize remainingWidth      = getLineWidth(idx, words.size());
         const usize avgRemainingPerLine = linesLeft > 0 ? (remainingWidth + linesLeft - 1) / linesLeft : 0;
 
@@ -919,8 +919,8 @@ namespace draconis::ui {
           currentLine += " ";
           currentWidth += 1;
         }
-        currentLine += words[idx];
-        currentWidth += wordWidths[idx];
+        currentLine += words.at(idx);
+        currentWidth += wordWidths.at(idx);
       }
 
       if (!currentLine.empty())
@@ -1037,39 +1037,39 @@ namespace draconis::ui {
       }
 
       for (usize i = 0; i < group.rows.size(); ++i) {
-        const usize    leftWidth  = group.iconWidths[i] + group.maxLabelWidth;
-        const LogColor valueColor = group.valueColors[i];
+        const usize    leftWidth  = group.iconWidths.at(i) + group.maxLabelWidth;
+        const LogColor valueColor = group.valueColors.at(i);
 
         // Handle word wrapping if enabled for this row
-        if (group.autoWraps[i]) {
+        if (group.autoWraps.at(i)) {
           // Leave at least 1 space between label and value
           const usize       availableWidth = maxContentWidth - leftWidth - 1;
-          const Vec<String> wrappedLines   = WordWrap(group.rows[i].value, availableWidth);
+          const Vec<String> wrappedLines   = WordWrap(group.rows.at(i).value, availableWidth);
 
           if (!wrappedLines.empty()) {
             // First line: icon + label + first wrapped segment
-            const String coloredFirstLine = Stylize(wrappedLines[0], { .color = valueColor });
+            const String coloredFirstLine = Stylize(wrappedLines.at(0), { .color = valueColor });
 
             const usize
-              firstLineWidth = GetVisualWidth(wrappedLines[0]),
+              firstLineWidth = GetVisualWidth(wrappedLines.at(0)),
               firstPadding   = (maxContentWidth >= leftWidth + firstLineWidth + 1)
               ? maxContentWidth - (leftWidth + firstLineWidth)
               : 1;
 
             out += "│";
-            out += group.coloredIcons[i];
-            out += group.coloredLabels[i];
-            out.append(group.maxLabelWidth - group.labelWidths[i], ' ');
+            out += group.coloredIcons.at(i);
+            out += group.coloredLabels.at(i);
+            out.append(group.maxLabelWidth - group.labelWidths.at(i), ' ');
             out.append(firstPadding, ' ');
             out += coloredFirstLine;
             out += " │\n";
 
             // Subsequent lines: indent + wrapped segment (right-aligned)
             for (usize j = 1; j < wrappedLines.size(); ++j) {
-              const String coloredLine = Stylize(wrappedLines[j], { .color = valueColor });
+              const String coloredLine = Stylize(wrappedLines.at(j), { .color = valueColor });
 
               const usize
-                lineWidth   = GetVisualWidth(wrappedLines[j]),
+                lineWidth   = GetVisualWidth(wrappedLines.at(j)),
                 linePadding = (maxContentWidth > lineWidth)
                 ? maxContentWidth - lineWidth
                 : 0;
@@ -1083,17 +1083,17 @@ namespace draconis::ui {
         } else {
           // Normal rendering without word wrap
           const usize
-            rightWidth = group.valueWidths[i],
+            rightWidth = group.valueWidths.at(i),
             padding    = (maxContentWidth >= leftWidth + rightWidth)
             ? maxContentWidth - (leftWidth + rightWidth)
             : 0;
 
           out += "│";
-          out += group.coloredIcons[i];
-          out += group.coloredLabels[i];
-          out.append(group.maxLabelWidth - group.labelWidths[i], ' ');
+          out += group.coloredIcons.at(i);
+          out += group.coloredLabels.at(i);
+          out.append(group.maxLabelWidth - group.labelWidths.at(i), ' ');
           out.append(padding, ' ');
-          out += group.coloredValues[i];
+          out += group.coloredValues.at(i);
           out += " │\n";
         }
       }
@@ -1213,8 +1213,9 @@ namespace draconis::ui {
               label = std::format("{} {}", displayIt->second.label, *fieldName);
             else
               label = *fieldName;
-          } else
+          } else {
             label = *fieldName;
+          }
         } else {
           if (!hasDisplayInfo)
             return None;
@@ -1356,7 +1357,8 @@ namespace draconis::ui {
     const String& name     = config.general.getName();
     const Icons&  iconType = ICON_TYPE;
 
-    Option<StringView> distroIcon = None;
+    // This is reassigned only by Linux builds.
+    Option<StringView> distroIcon = None; // NOLINT(misc-const-correctness)
 #ifdef __linux__
     if (data.operatingSystem)
       distroIcon = GetDistroIcon(data.operatingSystem->id);
@@ -1393,11 +1395,11 @@ namespace draconis::ui {
       maxContentWidth = std::max(maxContentWidth, ProcessGroup(group));
     }
 
-    String greetingLine = std::format("{}{}", iconType.user, _format_f("hello", name));
-    maxContentWidth     = std::max(maxContentWidth, GetVisualWidth(greetingLine));
+    const String greetingLine = std::format("{}{}", iconType.user, _format_f("hello", name));
+    maxContentWidth           = std::max(maxContentWidth, GetVisualWidth(greetingLine));
 
     // Calculate width needed for color circles (including minimum spacing)
-    const usize circleWidth       = GetVisualWidth(COLOR_CIRCLES[0]);
+    const usize circleWidth       = GetVisualWidth(COLOR_CIRCLES.at(0));
     const usize totalCirclesWidth = COLOR_CIRCLES.size() * circleWidth;
     const usize minSpacingPerGap  = 1;
     const usize totalMinSpacing   = (COLOR_CIRCLES.size() - 1) * minSpacingPerGap;
@@ -1469,8 +1471,8 @@ namespace draconis::ui {
     if (!boxLines.empty() && boxLines.back().empty())
       boxLines.pop_back();
 
-    usize  boxWidth = GetVisualWidth(boxLines[0]);
-    String emptyBox = "│" + String(boxWidth - 2, ' ') + "│";
+    const usize  boxWidth = GetVisualWidth(boxLines.at(0));
+    const String emptyBox = "│" + String(boxWidth - 2, ' ') + "│";
 
     Vec<String> logoLines;
     usize       maxLogoW      = 0;
@@ -1500,8 +1502,8 @@ namespace draconis::ui {
     if (!isInlineLogo && logoLines.empty())
       return out;
 
-    const usize logoHeight = isInlineLogo ? (logoHeightOpt ? logoHeightOpt : boxLines.size()) : logoLines.size();
-    String      emptyLogo(maxLogoW, ' ');
+    const usize  logoHeight = isInlineLogo ? (logoHeightOpt ? logoHeightOpt : boxLines.size()) : logoLines.size();
+    const String emptyLogo(maxLogoW, ' ');
 
     // Inline logo: emit the image to stdout once, then print the box shifted right by logo width.
     if (isInlineLogo) {
@@ -1524,7 +1526,7 @@ namespace draconis::ui {
 
       for (usize i = 0; i < totalHeight; ++i) {
         const bool    isBoxLine = i >= boxPadTop && i < boxPadTop + boxLines.size();
-        const String& line      = isBoxLine ? boxLines[i - boxPadTop] : emptyBox;
+        const String& line      = isBoxLine ? boxLines.at(i - boxPadTop) : emptyBox;
 
         newOut += "\r";
         newOut += std::format("\033[{}C", shift);
@@ -1548,7 +1550,7 @@ namespace draconis::ui {
       if (i < logoPadTop || i >= logoPadTop + logoHeight) {
         outputLine += emptyLogo;
       } else {
-        const String& logoLine = logoLines[i - logoPadTop];
+        const String& logoLine = logoLines.at(i - logoPadTop);
 
         const usize logoLineWidth = GetVisualWidth(logoLine);
         const usize logoPadding =
@@ -1566,7 +1568,7 @@ namespace draconis::ui {
       if (i < boxPadTop || i >= boxPadTop + boxLines.size())
         outputLine += emptyBox;
       else
-        outputLine += boxLines[i - boxPadTop];
+        outputLine += boxLines.at(i - boxPadTop);
 
       newOut += outputLine + "\n";
     }

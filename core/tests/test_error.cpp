@@ -16,13 +16,13 @@ namespace {
   }
 
   auto try_test_helper_fail() -> Result<i32> {
-    i32 val = TRY(fail_helper());
+    const i32 val = TRY(fail_helper());
 
     return val + 1; // Should not reach here
   }
 
   auto try_test_helper_success() -> Result<i32> {
-    i32 val = TRY(succeed_helper());
+    const i32 val = TRY(succeed_helper());
 
     return val + 1; // Should be 43
   }
@@ -30,7 +30,7 @@ namespace {
 
 auto main() -> int {
   "DracError construction"_test = [] -> void {
-    DracError err(DracErrorCode::NotFound, "Item not found");
+    const DracError err(DracErrorCode::NotFound, "Item not found");
 
     expect(err.code == DracErrorCode::NotFound);
     expect(err.message == String("Item not found"));
@@ -47,7 +47,7 @@ auto main() -> int {
   "TRY macro failure"_test = [] -> void {
 #ifdef _MSC_VER
     try {
-      [[maybe_unused]] Result<i32> res = try_test_helper_fail();
+      [[maybe_unused]] const Result<i32> res = try_test_helper_fail();
       expect(false); // Should have thrown
     } catch (const DracError& e) {
       expect(e.code == DracErrorCode::InvalidArgument);

@@ -29,7 +29,7 @@ auto main() -> int {
     SetEnv("DRAC_TEST_VAR2", "value");
     UnsetEnv("DRAC_TEST_VAR2");
 
-    Result<String> result = GetEnv("DRAC_TEST_VAR2");
+    const Result<String> result = GetEnv("DRAC_TEST_VAR2");
 
     expect(!result.has_value());
   };

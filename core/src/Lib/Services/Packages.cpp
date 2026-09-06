@@ -80,8 +80,9 @@ namespace {
           if (std::error_code isFileErr; entry.is_regular_file(isFileErr) && !isFileErr) {
             if (path.extension() == filterPath)
               count++;
-          } else if (isFileErr)
+          } else if (isFileErr) {
             warn_log("Error stating entry '{}' in {} directory: {}", path.string(), pmId, isFileErr.message());
+          }
         }
       } else {
         for (const fs::directory_entry& entry : dirIter) {
@@ -268,7 +269,7 @@ namespace draconis::services::packages {
     u64  totalCount   = 0;
     bool oneSucceeded = false;
 
-    const auto processResult = [&](const Result<u64>& result) {
+    const auto processResult = [&](const Result<u64>& result) -> void {
       using matchit::match, matchit::is, matchit::or_, matchit::_;
 
       if (result) {
@@ -276,8 +277,8 @@ namespace draconis::services::packages {
         oneSucceeded = true;
       } else {
         match(result.error().code)(
-          is | or_(NotFound, ApiUnavailable, NotSupported) = [&] { debug_at(result.error()); },
-          is | _                                           = [&] { error_at(result.error()); }
+          is | or_(NotFound, ApiUnavailable, NotSupported) = [&] -> void { debug_at(result.error()); },
+          is | _                                           = [&] -> void { error_at(result.error()); }
         );
       }
     };
@@ -297,12 +298,12 @@ namespace draconis::services::packages {
     if (HasPackageManager(enabledPackageManagers, Manager::Xbps))
       processResult(CountXbps(cache));
     #endif
-  #elif defined(__APPLE__)
+  #elifdef __APPLE__
     if (HasPackageManager(enabledPackageManagers, Manager::Homebrew))
       processResult(GetHomebrewCount(cache));
     if (HasPackageManager(enabledPackageManagers, Manager::Macports))
       processResult(GetMacPortsCount(cache));
-  #elif defined(_WIN32)
+  #elifdef _WIN32
     if (HasPackageManager(enabledPackageManagers, Manager::Winget))
       processResult(CountWinGet(cache));
     if (HasPackageManager(enabledPackageManagers, Manager::Chocolatey))
@@ -341,7 +342,7 @@ namespace draconis::services::packages {
     Map<String, u64> individualCounts;
     bool             oneSucceeded = false;
 
-    const auto processResult = [&](const String& name, const Result<u64>& result) {
+    const auto processResult = [&](const String& name, const Result<u64>& result) -> void {
       using matchit::match, matchit::is, matchit::or_, matchit::_;
 
       if (result) {
@@ -349,8 +350,8 @@ namespace draconis::services::packages {
         oneSucceeded           = true;
       } else {
         match(result.error().code)(
-          is | or_(NotFound, ApiUnavailable, NotSupported) = [&] { debug_at(result.error()); },
-          is | _                                           = [&] { error_at(result.error()); }
+          is | or_(NotFound, ApiUnavailable, NotSupported) = [&] -> void { debug_at(result.error()); },
+          is | _                                           = [&] -> void { error_at(result.error()); }
         );
       }
     };
@@ -370,12 +371,12 @@ namespace draconis::services::packages {
     if (HasPackageManager(enabledPackageManagers, Manager::Xbps))
       processResult("xbps", CountXbps(cache));
     #endif
-  #elif defined(__APPLE__)
+  #elifdef __APPLE__
     if (HasPackageManager(enabledPackageManagers, Manager::Homebrew))
       processResult("homebrew", GetHomebrewCount(cache));
     if (HasPackageManager(enabledPackageManagers, Manager::Macports))
       processResult("macports", GetMacPortsCount(cache));
-  #elif defined(_WIN32)
+  #elifdef _WIN32
     if (HasPackageManager(enabledPackageManagers, Manager::Winget))
       processResult("winget", CountWinGet(cache));
     if (HasPackageManager(enabledPackageManagers, Manager::Chocolatey))

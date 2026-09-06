@@ -7,6 +7,7 @@
 
 #if DRAC_ENABLE_PLUGINS
 
+  #include <cstdio>   // std::fputs, std::fputc
   #include <format>   // std::format
   #include <optional> // std::optional
   #include <string>   // std::string
@@ -51,14 +52,14 @@ namespace draconis::core::plugin {
         // semicolon-separated on Windows). Needed on systems without the FHS
         // directories below (e.g. Nix) and handy for plugin development.
   #ifdef _WIN32
-        constexpr char PATH_SEPARATOR = ';';
+        constexpr char pathSeparator = ';';
   #else
-        constexpr char PATH_SEPARATOR = ':';
+        constexpr char pathSeparator = ':';
   #endif
         if (auto result = GetEnv("DRAC_PLUGIN_PATH")) {
           const String& value = *result;
           for (String::size_type start = 0; start <= value.size();) {
-            String::size_type end = value.find(PATH_SEPARATOR, start);
+            String::size_type end = value.find(pathSeparator, start);
             if (end == String::npos)
               end = value.size();
             if (end > start)
@@ -149,8 +150,16 @@ namespace draconis::core::plugin {
     };
   }
 
-  PluginManager::~PluginManager() {
-    shutdown();
+  PluginManager::~PluginManager() noexcept {
+    try {
+      shutdown();
+    } catch (const std::exception& error) {
+      (void)std::fputs("Plugin manager shutdown failed: ", stderr);
+      (void)std::fputs(error.what(), stderr);
+      (void)std::fputc('\n', stderr);
+    } catch (...) {
+      (void)std::fputs("Plugin manager shutdown failed with an unknown exception\n", stderr);
+    }
   }
 
   auto PluginManager::getInstance() -> PluginManager& {
@@ -176,7 +185,7 @@ namespace draconis::core::plugin {
       addSearchPath(path);
 
     {
-      std::unique_lock<std::shared_mutex> lock(m_mutex);
+      const std::unique_lock<std::shared_mutex> lock(m_mutex);
       // Scan for plugins in all search paths
       if (auto scanResult = scanForPlugins(); !scanResult) {
         warn_log("Failed to scan for plugins: {}", scanResult.error().message);
@@ -214,7 +223,7 @@ namespace draconis::core::plugin {
     pluginNamesToUnload.reserve(m_plugins.size());
 
     {
-      std::shared_lock<std::shared_mutex> lock(m_mutex);
+      const std::shared_lock<std::shared_mutex> lock(m_mutex);
       for (const auto& [name, loadedPlugin] : m_plugins)
         if (loadedPlugin.isLoaded)
           pluginNamesToUnload.push_back(name);
@@ -230,7 +239,7 @@ namespace draconis::core::plugin {
   }
 
   auto PluginManager::addSearchPath(const fs::path& path) -> Unit {
-    std::unique_lock<std::shared_mutex> lock(m_mutex);
+    const std::unique_lock<std::shared_mutex> lock(m_mutex);
 
     // Add only if not already present
     if (std::ranges::find(m_pluginSearchPaths, path) == m_pluginSearchPaths.end()) {
@@ -240,7 +249,7 @@ namespace draconis::core::plugin {
   }
 
   auto PluginManager::getSearchPaths() const -> Span<const fs::path> {
-    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    const std::shared_lock<std::shared_mutex> lock(m_mutex);
     return m_pluginSearchPaths;
   }
 
@@ -271,7 +280,7 @@ namespace draconis::core::plugin {
     CacheManager&      cache,
     Option<PluginType> requiredType
   ) -> Result<Unit> {
-    std::unique_lock<std::shared_mutex> lock(m_mutex);
+    const std::unique_lock<std::shared_mutex> lock(m_mutex);
 
     if (const auto iter = m_plugins.find(pluginName); iter != m_plugins.end() && iter->second.isLoaded) {
       debug_log("Plugin '{}' is already loaded.", pluginName);
@@ -368,8 +377,9 @@ namespace draconis::core::plugin {
     if (Result<IPlugin* (*)()> createFuncResult = getCreatePluginFunc(loadedPlugin.handle); !createFuncResult) {
       unloadDynamicLibrary(loadedPlugin.handle);
       return std::unexpected(createFuncResult.error());
-    } else
+    } else {
       loadedPlugin.instance.reset((*createFuncResult)());
+    }
 
     if (!loadedPlugin.instance) {
       unloadDynamicLibrary(loadedPlugin.handle);
@@ -432,7 +442,7 @@ namespace draconis::core::plugin {
   }
 
   auto PluginManager::unloadPlugin(const String& pluginName) -> Result<Unit> {
-    std::unique_lock<std::shared_mutex> lock(m_mutex);
+    const std::unique_lock<std::shared_mutex> lock(m_mutex);
 
     const auto pluginIter = m_plugins.find(pluginName);
     if (pluginIter == m_plugins.end())
@@ -449,12 +459,12 @@ namespace draconis::core::plugin {
     // Remove from type-safe caches
     switch (loadedPlugin.metadata.type) {
       case PluginType::InfoProvider:
-        std::erase_if(m_infoProviderPlugins, [&](const IInfoProviderPlugin* plugin) {
+        std::erase_if(m_infoProviderPlugins, [&](const IInfoProviderPlugin* plugin) -> bool {
           return plugin == loadedPlugin.instance.get();
         });
         break;
       case PluginType::OutputFormat:
-        std::erase_if(m_outputFormatPlugins, [&](const IOutputFormatPlugin* plugin) {
+        std::erase_if(m_outputFormatPlugins, [&](const IOutputFormatPlugin* plugin) -> bool {
           return plugin == loadedPlugin.instance.get();
         });
         break;
@@ -487,7 +497,7 @@ namespace draconis::core::plugin {
   }
 
   auto PluginManager::getPlugin(const String& pluginName) const -> Option<IPlugin*> {
-    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    const std::shared_lock<std::shared_mutex> lock(m_mutex);
     if (const auto iter = m_plugins.find(pluginName); iter != m_plugins.end())
       return iter->second.instance.get();
 
@@ -495,12 +505,12 @@ namespace draconis::core::plugin {
   }
 
   auto PluginManager::getInfoProviderPlugins() const -> Span<IInfoProviderPlugin* const> {
-    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    const std::shared_lock<std::shared_mutex> lock(m_mutex);
     return m_infoProviderPlugins;
   }
 
   auto PluginManager::getInfoProviderByName(const String& providerId) const -> Option<IInfoProviderPlugin*> {
-    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    const std::shared_lock<std::shared_mutex> lock(m_mutex);
     for (auto* plugin : m_infoProviderPlugins) {
       if (plugin->getProviderId() == providerId)
         return plugin;
@@ -509,20 +519,20 @@ namespace draconis::core::plugin {
   }
 
   auto PluginManager::getOutputFormatPlugins() const -> Span<IOutputFormatPlugin* const> {
-    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    const std::shared_lock<std::shared_mutex> lock(m_mutex);
     return m_outputFormatPlugins;
   }
 
   auto PluginManager::listLoadedPlugins() const -> Vec<PluginMetadata> {
-    std::shared_lock<std::shared_mutex> lock(m_mutex);
-    Vec<PluginMetadata>                 loadedMetadata;
+    const std::shared_lock<std::shared_mutex> lock(m_mutex);
+    Vec<PluginMetadata>                       loadedMetadata;
     loadedMetadata.reserve(m_plugins.size());
 
     for (const auto& [name, loadedPlugin] : m_plugins)
       if (loadedPlugin.isLoaded)
         loadedMetadata.push_back(loadedPlugin.metadata);
 
-    std::ranges::sort(loadedMetadata, [](const PluginMetadata& metaA, const PluginMetadata& metaB) {
+    std::ranges::sort(loadedMetadata, [](const PluginMetadata& metaA, const PluginMetadata& metaB) -> bool {
       return metaA.name < metaB.name;
     });
 
@@ -530,8 +540,8 @@ namespace draconis::core::plugin {
   }
 
   auto PluginManager::listDiscoveredPlugins() const -> Vec<String> {
-    std::shared_lock<std::shared_mutex> lock(m_mutex);
-    Vec<String>                         discoveredNames;
+    const std::shared_lock<std::shared_mutex> lock(m_mutex);
+    Vec<String>                               discoveredNames;
     discoveredNames.reserve(m_discoveredPlugins.size());
 
     for (const auto& [name, path] : m_discoveredPlugins)
@@ -542,8 +552,8 @@ namespace draconis::core::plugin {
   }
 
   auto PluginManager::isPluginLoaded(const String& pluginName) const -> bool {
-    std::shared_lock<std::shared_mutex> lock(m_mutex);
-    const auto                          iter = m_plugins.find(pluginName);
+    const std::shared_lock<std::shared_mutex> lock(m_mutex);
+    const auto                                iter = m_plugins.find(pluginName);
     return iter != m_plugins.end() && iter->second.isLoaded;
   }
 
@@ -626,7 +636,7 @@ namespace draconis::core::plugin {
     debug_log("Initializing plugin instance '{}'", loadedPlugin.metadata.name);
 
     // Create plugin context with paths
-    PluginContext ctx = GetPluginContext();
+    const PluginContext ctx = GetPluginContext();
 
     // Ensure directories exist
     std::error_code errc;

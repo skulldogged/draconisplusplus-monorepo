@@ -51,7 +51,8 @@ namespace {
   }
 } // namespace
 
-struct SystemProperty {
+namespace {
+  struct SystemProperty {
   String name;
   String value;
   String error;
@@ -64,10 +65,11 @@ struct SystemProperty {
     : name(std::move(name)), error(std::format("{} ({})", err.message, magic_enum::enum_name(err.code))), hasError(true) {}
 };
 
-struct SystemInfo {
-  Vec<SystemProperty> properties;
-  String              version = DRAC_VERSION;
-};
+  struct SystemInfo {
+    Vec<SystemProperty> properties;
+    String              version = DRAC_VERSION;
+  };
+} // namespace
 
 namespace glz {
   template <>
@@ -95,29 +97,29 @@ namespace glz {
 auto main() -> i32 {
   glz::http_server server;
 
-  server.on_error([](const std::error_code errc, const std::source_location& loc) {
+  server.on_error([](const std::error_code errc, const std::source_location& loc) -> void {
     if (errc != asio::error::operation_aborted)
       error_log("Server error at {}:{} -> {}", loc.file_name(), loc.line(), errc.message());
   });
 
-  server.get("/style.css", [](const glz::request& req, glz::response& res) {
+  server.get("/style.css", [](const glz::request& req, glz::response& res) -> void {
     info_log("Handling request for style.css from {}", req.remote_ip);
 
     Result<String> result = readFile(stylingFile);
 
-    if (result)
+    if (result) {
       res.header("Content-Type", "text/css; charset=utf-8")
         .header("Cache-Control", "no-cache, no-store, must-revalidate")
         .header("Pragma", "no-cache")
         .header("Expires", "0")
         .body(*result);
-    else {
+    } else {
       error_log("Failed to serve style.css: {}", result.error().message);
       res.status(500).body("Internal Server Error: Could not load stylesheet.");
     }
   });
 
-  server.get("/", [](const glz::request& req, glz::response& res) {
+  server.get("/", [](const glz::request& req, glz::response& res) -> void {
     info_log("Handling request from {}", req.remote_ip);
 
     SystemInfo sysInfo;
@@ -130,19 +132,19 @@ auto main() -> i32 {
       using enum draconis::utils::error::DracErrorCode;
 
       auto addProperty = Overload {
-        [&](const String& name, const Result<String>& result) {
+        [&](const String& name, const Result<String>& result) -> void {
           if (result)
             sysInfo.properties.emplace_back(name, *result);
           else if (result.error().code != NotSupported)
             sysInfo.properties.emplace_back(name, result.error());
         },
-        [&](const String& name, const Result<OSInfo>& result) {
+        [&](const String& name, const Result<OSInfo>& result) -> void {
           if (result)
             sysInfo.properties.emplace_back(name, std::format("{} {}", result->name, result->version));
           else
             sysInfo.properties.emplace_back(name, result.error());
         },
-        [&](const String& name, const Result<ResourceUsage>& result) {
+        [&](const String& name, const Result<ResourceUsage>& result) -> void {
           if (result)
             sysInfo.properties.emplace_back(name, std::format("{} / {}", BytesToGiB(result->usedBytes), BytesToGiB(result->totalBytes)));
           else
@@ -194,7 +196,7 @@ auto main() -> i32 {
 
     signal_set signals(signalContext, SIGINT, SIGTERM);
 
-    signals.async_wait([&](const error_code& error, i32 signal_number) {
+    signals.async_wait([&](const error_code& error, i32 signal_number) -> void {
       if (!error) {
         info_log("\nShutdown signal ({}) received. Stopping server...", signal_number);
         server.stop();

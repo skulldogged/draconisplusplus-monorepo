@@ -171,7 +171,7 @@ namespace draconis::ui::ascii {
     types::StringView asciiArt;
 
     for (const auto& [key, art] : LOGOS)
-      if (operatingSystem.find(key) != types::String::npos) {
+      if (operatingSystem.contains(key)) {
         asciiArt = art;
         break;
       }
@@ -184,7 +184,7 @@ namespace draconis::ui::ascii {
     types::usize                  start = 0;
 
     while (pos < asciiArt.size()) {
-      if (asciiArt[pos] == '\n') {
+      if (asciiArt.at(pos) == '\n') {
         lines.push_back(asciiArt.substr(start, pos - start));
         start = pos + 1;
       }

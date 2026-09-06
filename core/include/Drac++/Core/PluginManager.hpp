@@ -116,7 +116,7 @@ namespace draconis::core::plugin {
     auto operator=(const PluginManager&) -> PluginManager& = delete;
     auto operator=(PluginManager&&) -> PluginManager&      = delete;
 
-    ~PluginManager(); // Destructor to unload all plugins
+    ~PluginManager() noexcept; // Destructor to unload all plugins
 
     static auto getInstance() -> PluginManager&;
 
