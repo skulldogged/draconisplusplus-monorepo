@@ -53,6 +53,7 @@
   #include "Drac++/Utils/Env.hpp"
   #include "Drac++/Utils/Error.hpp"
   #include "Drac++/Utils/Types.hpp"
+  #include "Drac++/Utils/WindowsTopology.hpp"
 
 namespace {
   using draconis::utils::error::DracError;
@@ -190,7 +191,7 @@ namespace {
                                                   // NOLINTNEXTLINE(*-pro-type-reinterpret-cast) - reinterpret_cast is required to convert the buffer to a byte array.
                                                   reinterpret_cast<LPBYTE>(registryBuffer.data()),
                                                   &dataSizeInBytes);
-          FAILED(status)) {
+          status != ERROR_SUCCESS) {
         if (status == ERROR_FILE_NOT_FOUND)
           ERR(NotFound, "Registry value not found");
 
@@ -201,8 +202,13 @@ namespace {
       }
 
       // Ensure the retrieved value is a string.
-      if (type == REG_SZ || type == REG_EXPAND_SZ)
-        return WString(registryBuffer.data());
+      if (type == REG_SZ || type == REG_EXPAND_SZ) {
+        const usize length = dataSizeInBytes / sizeof(WCStr);
+        if (dataSizeInBytes % sizeof(WCStr) != 0 || length > registryBuffer.size())
+          ERR(ParseError, "Invalid registry string size");
+        const auto end = std::find(registryBuffer.begin(), registryBuffer.begin() + length, L'\0');
+        return WString(registryBuffer.begin(), end);
+      }
 
       ERR_FMT(ParseError, "Registry value exists but is not a string type. Type is: {}", type);
     }
@@ -725,7 +731,7 @@ namespace draconis::core::system {
   }
 
   auto GetHost(CacheManager& cache) -> Result<String> {
-    return cache.getOrSet<String>("windows_host", draconis::utils::cache::CachePolicy::neverExpire(), []() -> Result<String> {
+    return cache.getOrSet<String>("windows_host", draconis::utils::cache::CachePolicy::inMemory(), []() -> Result<String> {
       // Read from BIOS registry key which contains system product information
       HKEY biosKey = nullptr;
 
@@ -746,7 +752,7 @@ namespace draconis::core::system {
   }
 
   auto GetKernelVersion(CacheManager& cache) -> Result<String> {
-    return cache.getOrSet<String>("windows_kernel_version", draconis::utils::cache::CachePolicy::neverExpire(), []() -> Result<String> {
+    return cache.getOrSet<String>("windows_kernel_version", draconis::utils::cache::CachePolicy::tempDirectory(), []() -> Result<String> {
       // See the OsVersionCache class for how the version data is retrieved.
       const auto& [majorVersion, minorVersion, buildNumber] = TRY(OsVersionCache::getInstance().getVersionData());
 
@@ -857,11 +863,15 @@ namespace draconis::core::system {
     // GetDiskFreeSpaceExW is a pretty old function and doesn't use native 64-bit integers,
     // so we have to use ULARGE_INTEGER instead. It's basically a union that holds either a
     // 64-bit integer or two 32-bit integers.
-    ULARGE_INTEGER freeBytes, totalBytes;
+    ULARGE_INTEGER freeBytes {}, totalBytes {};
 
     // Get the disk usage for the C: drive.
-    if (FAILED(GetDiskFreeSpaceExW(L"C:\\\\", nullptr, &totalBytes, &freeBytes)))
-      ERR(IoError, "Failed to get disk usage");
+    Array<wchar_t, MAX_PATH> windowsDirectory {};
+    const UINT               length = GetWindowsDirectoryW(windowsDirectory.data(), windowsDirectory.size());
+    if (length == 0 || length >= windowsDirectory.size())
+      ERR_FMT(IoError, "Failed to locate Windows directory: {}", GetLastError());
+    if (!GetDiskFreeSpaceExW(windowsDirectory.data(), nullptr, &totalBytes, &freeBytes))
+      ERR_FMT(IoError, "Failed to get disk usage: {}", GetLastError());
 
     // Calculate the used bytes by subtracting the free bytes from the total bytes.
     // QuadPart corresponds to the 64-bit integer in the union. (LowPart/HighPart are for the 32-bit integers.)
@@ -931,7 +941,7 @@ namespace draconis::core::system {
   }
 
   auto GetCPUModel(CacheManager& cache) -> Result<String> {
-    return cache.getOrSet<String>("windows_cpu_model", draconis::utils::cache::CachePolicy::neverExpire(), []() -> Result<String> {
+    return cache.getOrSet<String>("windows_cpu_model", draconis::utils::cache::CachePolicy::inMemory(), []() -> Result<String> {
       /*
        * This function attempts to get the CPU model name on Windows in two ways:
        * 1. Using __cpuid on x86/x86_64 platforms (much more direct and efficient).
@@ -990,7 +1000,8 @@ namespace draconis::core::system {
           if (!result.empty())
             return result;
         }
-      } else {
+      }
+      {
         /*
          * If the CPUID instruction fails/is unsupported on the target architecture,
          * we fallback to querying the registry. This is a lot more reliable than
@@ -1000,7 +1011,7 @@ namespace draconis::core::system {
         HKEY hKey = nullptr;
 
         // This key contains information about the processor.
-        if (FAILED(RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0", 0, KEY_READ, &hKey))) {
+        if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
           // Get the processor name value from the registry key.
           Result<WString> processorNameW = GetRegistryValue(hKey, L"ProcessorNameString");
 
@@ -1030,25 +1041,23 @@ namespace draconis::core::system {
       if (GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &bufferSize) == FALSE && GetLastError() != ERROR_INSUFFICIENT_BUFFER)
         ERR_FMT(ApiUnavailable, "GetLogicalProcessorInformationEx (size query) failed with error code {}", GetLastError());
 
-      Array<BYTE, 1024> buffer {};
-
-      // NOLINTNEXTLINE(*-pro-type-reinterpret-cast)
-      if (GetLogicalProcessorInformationEx(RelationProcessorCore, reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buffer.data()), &bufferSize) == FALSE)
-        ERR_FMT(ApiUnavailable, "GetLogicalProcessorInformationEx (data retrieval) failed with error code {}", GetLastError());
-
-      DWORD            physicalCores = 0;
-      DWORD            offset        = 0;
-      const Span<BYTE> bufferSpan(buffer);
-
-      while (offset < bufferSize) {
-        physicalCores++;
-
-        // NOLINTNEXTLINE(*-pro-type-reinterpret-cast)
-        const auto* current = reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(&bufferSpan.subspan(offset).front());
-        offset += current->Size;
+      for (int attempt = 0; attempt < 4; ++attempt) {
+        if (bufferSize == 0)
+          ERR(ParseError, "Empty processor topology buffer");
+        Vec<BYTE> buffer(bufferSize);
+        DWORD     capacity = static_cast<DWORD>(buffer.size());
+        if (GetLogicalProcessorInformationEx(RelationProcessorCore, reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buffer.data()), &capacity)) {
+          if (capacity > buffer.size() || logicalProcessors > std::numeric_limits<u16>::max())
+            ERR(ResourceExhausted, "Processor topology exceeds the public API range");
+          const auto physicalCores = TRY(draconis::utils::windows::CountProcessorCores(Span<const BYTE>(buffer).first(capacity)));
+          return CPUCores(physicalCores, static_cast<u16>(logicalProcessors));
+        }
+        const DWORD error = GetLastError();
+        if (error != ERROR_INSUFFICIENT_BUFFER)
+          ERR_FMT(ApiUnavailable, "GetLogicalProcessorInformationEx failed: {}", error);
+        bufferSize = capacity;
       }
-
-      return CPUCores(static_cast<u16>(physicalCores), static_cast<u16>(logicalProcessors));
+      ERR(ApiUnavailable, "Processor topology kept changing during enumeration");
     });
   }
 
@@ -1097,91 +1106,62 @@ namespace draconis::core::system {
   }
 
   auto GetOutputs(CacheManager& /*cache*/) -> Result<Vec<DisplayInfo>> {
-    UINT32 pathCount = 0;
-    UINT32 modeCount = 0;
-
-    if (FAILED(GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &pathCount, &modeCount)))
-      ERR_FMT(ApiUnavailable, "GetDisplayConfigBufferSizes failed to get buffer sizes: {}", GetLastError());
-
-    Vec<DISPLAYCONFIG_PATH_INFO> paths(pathCount);
-    Vec<DISPLAYCONFIG_MODE_INFO> modes(modeCount);
-
-    if (FAILED(QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &pathCount, paths.data(), &modeCount, modes.data(), nullptr)))
-      ERR_FMT(ApiUnavailable, "QueryDisplayConfig failed to retrieve display data: {}", GetLastError());
-
-    Vec<DisplayInfo> outputs;
-    outputs.reserve(pathCount);
-
-    // NOLINTBEGIN(*-pro-type-union-access)
-    for (const DISPLAYCONFIG_PATH_INFO& path : paths) {
-      if (path.flags & DISPLAYCONFIG_PATH_ACTIVE) {
-        const DISPLAYCONFIG_MODE_INFO& mode = modes.at(path.targetInfo.modeInfoIdx);
-
-        if (mode.infoType != DISPLAYCONFIG_MODE_INFO_TYPE_TARGET)
-          continue;
-
-        outputs.emplace_back(DisplayInfo(
-          path.targetInfo.id,
-          { .width = mode.targetMode.targetVideoSignalInfo.activeSize.cx, .height = mode.targetMode.targetVideoSignalInfo.activeSize.cy },
-          mode.targetMode.targetVideoSignalInfo.totalSize.cx != 0 && mode.targetMode.targetVideoSignalInfo.totalSize.cy != 0
-            ? static_cast<f64>(mode.targetMode.targetVideoSignalInfo.pixelRate) / (mode.targetMode.targetVideoSignalInfo.totalSize.cx * mode.targetMode.targetVideoSignalInfo.totalSize.cy)
-            : 0,
-          (path.flags & DISPLAYCONFIG_PATH_ACTIVE) != 0
-        ));
-      }
-    }
-    // NOLINTEND(*-pro-type-union-access)
-
-    if (outputs.empty())
-      ERR(NotFound, "No active displays found with QueryDisplayConfig");
-
-    return outputs;
-  }
-
-  auto GetPrimaryOutput(CacheManager& /*cache*/) -> Result<DisplayInfo> {
-    UINT32 pathCount = 0;
-    UINT32 modeCount = 0;
-
-    if (FAILED(GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &pathCount, &modeCount)))
-      ERR_FMT(ApiUnavailable, "GetDisplayConfigBufferSizes failed to get buffer sizes: {}", GetLastError());
-
-    Vec<DISPLAYCONFIG_PATH_INFO> paths(pathCount);
-    Vec<DISPLAYCONFIG_MODE_INFO> modes(modeCount);
-
-    if (FAILED(QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &pathCount, paths.data(), &modeCount, modes.data(), nullptr)))
-      ERR_FMT(ApiUnavailable, "QueryDisplayConfig failed to retrieve display data: {}", GetLastError());
-
-    // NOLINTBEGIN(*-pro-type-union-access)
-    for (const DISPLAYCONFIG_PATH_INFO& path : paths) {
-      if (!(path.flags & DISPLAYCONFIG_PATH_ACTIVE))
+    for (int attempt = 0; attempt < 4; ++attempt) {
+      UINT32 pathCount = 0, modeCount = 0;
+      LONG   status = GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &pathCount, &modeCount);
+      if (status != ERROR_SUCCESS)
+        ERR_FMT(ApiUnavailable, "GetDisplayConfigBufferSizes failed: {}", status);
+      Vec<DISPLAYCONFIG_PATH_INFO> paths(pathCount);
+      Vec<DISPLAYCONFIG_MODE_INFO> modes(modeCount);
+      status = QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &pathCount, paths.data(), &modeCount, modes.data(), nullptr);
+      if (status == ERROR_INSUFFICIENT_BUFFER)
         continue;
-
-      const DISPLAYCONFIG_MODE_INFO& sourceModeInfo = modes.at(path.sourceInfo.modeInfoIdx);
-
-      if (sourceModeInfo.infoType == DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE && sourceModeInfo.sourceMode.position.x == 0 && sourceModeInfo.sourceMode.position.y == 0) {
-        const DISPLAYCONFIG_MODE_INFO& targetModeInfo = modes.at(path.targetInfo.modeInfoIdx);
-
-        if (targetModeInfo.infoType != DISPLAYCONFIG_MODE_INFO_TYPE_TARGET)
+      if (status != ERROR_SUCCESS)
+        ERR_FMT(ApiUnavailable, "QueryDisplayConfig failed: {}", status);
+      if (pathCount > paths.size() || modeCount > modes.size())
+        ERR(ParseError, "Invalid display configuration size");
+      paths.resize(pathCount);
+      modes.resize(modeCount);
+      Vec<DisplayInfo> outputs;
+      outputs.reserve(pathCount);
+      for (const auto& path : paths) {
+        if (!(path.flags & DISPLAYCONFIG_PATH_ACTIVE))
           continue;
-
-        const DISPLAYCONFIG_VIDEO_SIGNAL_INFO& videoSignalInfo = targetModeInfo.targetMode.targetVideoSignalInfo;
-
-        return DisplayInfo(
-          path.targetInfo.id,
-          { .width = videoSignalInfo.activeSize.cx, .height = videoSignalInfo.activeSize.cy },
-          videoSignalInfo.totalSize.cx != 0 && videoSignalInfo.totalSize.cy != 0
-            ? static_cast<f64>(videoSignalInfo.pixelRate) / (videoSignalInfo.totalSize.cx * videoSignalInfo.totalSize.cy)
-            : 0,
-          true
-        );
+        if (path.targetInfo.modeInfoIdx >= modes.size() || path.sourceInfo.modeInfoIdx >= modes.size())
+          ERR(ParseError, "Invalid display mode index");
+        const auto& target = modes[path.targetInfo.modeInfoIdx];
+        const auto& source = modes[path.sourceInfo.modeInfoIdx];
+        if (target.infoType != DISPLAYCONFIG_MODE_INFO_TYPE_TARGET || source.infoType != DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE)
+          ERR(ParseError, "Unexpected display mode type");
+        const auto& signal = target.targetMode.targetVideoSignalInfo;
+        const f64   pixels = static_cast<f64>(signal.totalSize.cx) * signal.totalSize.cy;
+        outputs.emplace_back(path.targetInfo.id, DisplayInfo::Resolution { .width = signal.activeSize.cx, .height = signal.activeSize.cy }, pixels > 0 ? signal.pixelRate / pixels : 0, source.sourceMode.position.x == 0 && source.sourceMode.position.y == 0);
       }
+      if (outputs.empty())
+        ERR(NotFound, "No active displays found");
+      return outputs;
     }
-    // NOLINTEND(*-pro-type-union-access)
-
-    ERR(NotFound, "No primary display found with QueryDisplayConfig");
+    ERR(ApiUnavailable, "Display configuration kept changing during enumeration");
   }
 
-  auto GetNetworkInterfaces(CacheManager& /*cache*/) -> Result<Vec<NetworkInterface>> {
+  auto GetPrimaryOutput(CacheManager& cache) -> Result<DisplayInfo> {
+    const auto outputs = TRY(GetOutputs(cache));
+    for (const auto& output : outputs)
+      if (output.isPrimary)
+        return output;
+    ERR(NotFound, "No primary display found");
+  }
+
+  static auto CollectNetworkInterfaces(Option<NetworkInterface>* primary) -> Result<Vec<NetworkInterface>> {
+    Option<DWORD> primaryIndex;
+    if (primary) {
+      MIB_IPFORWARDROW route {};
+      sockaddr_in      destination {};
+      destination.sin_family = AF_INET;
+      inet_pton(AF_INET, "8.8.8.8", &destination.sin_addr);
+      if (GetBestRoute(destination.sin_addr.s_addr, 0, &route) == NO_ERROR)
+        primaryIndex = route.dwForwardIfIndex;
+    }
     Vec<NetworkInterface> interfaces;
     ULONG                 bufferSize = 15000; // A reasonable starting buffer size
     Vec<BYTE>             buffer(bufferSize);
@@ -1233,10 +1213,25 @@ namespace draconis::core::system {
             iface.ipv4Address = strBuffer.data();
         }
 
-      interfaces.emplace_back(iface);
+      if (primary && primaryIndex && pCurrAddresses->IfIndex == *primaryIndex)
+        *primary = iface;
+      interfaces.emplace_back(std::move(iface));
     }
 
     return interfaces;
+  }
+
+  auto GetNetworkInterfaces(CacheManager& /*cache*/) -> Result<Vec<NetworkInterface>> {
+    return CollectNetworkInterfaces(nullptr);
+  }
+
+  auto GetNetworkSnapshot(CacheManager& /*cache*/) -> Result<NetworkSnapshot> {
+    NetworkSnapshot snapshot;
+    auto            interfaces = CollectNetworkInterfaces(&snapshot.primaryInterface);
+    if (!interfaces)
+      return Err(interfaces.error());
+    snapshot.interfaces = std::move(*interfaces);
+    return snapshot;
   }
 
   auto GetPrimaryNetworkInterface(CacheManager& cache) -> Result<NetworkInterface> {
@@ -1339,9 +1334,9 @@ namespace draconis::core::system {
     return Battery(
       status,
       percentage,
-      powerStatus.BatteryFullLifeTime == std::numeric_limits<DWORD>::max()
+      powerStatus.BatteryLifeTime == std::numeric_limits<DWORD>::max()
         ? None
-        : Some(std::chrono::seconds(powerStatus.BatteryFullLifeTime))
+        : Some(std::chrono::seconds(powerStatus.BatteryLifeTime))
     );
   }
 } // namespace draconis::core::system
@@ -1366,7 +1361,7 @@ namespace draconis::services::packages {
 
       // Get the number of directories in the lib directory.
       // This corresponds to the number of packages installed.
-      return TRY(GetDirCount(chocoPath));
+      return GetDirCount(chocoPath);
     });
   }
 
@@ -1389,50 +1384,14 @@ namespace draconis::services::packages {
 
       // Get the number of directories in the apps directory.
       // This corresponds to the number of packages installed.
-      return TRY(GetDirCount(scoopAppsPath));
+      return GetDirCount(scoopAppsPath);
     });
   }
 
-  auto CountWinGet(CacheManager& cache) -> Result<u64> {
-    return cache.getOrSet<u64>("windows_winget_count", []() -> Result<u64> {
-      HKEY packagesKey = nullptr;
-
-      LSTATUS status = RegOpenKeyExW(
-        HKEY_CURRENT_USER,
-        L"Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppModel\\Repository\\Packages",
-        0,
-        KEY_READ,
-        &packagesKey
-      );
-
-      if (status != ERROR_SUCCESS)
-        ERR(NotFound, "Could not open AppModel packages registry key");
-
-      DWORD subKeyCount = 0;
-
-      status = RegQueryInfoKeyW(
-        packagesKey,
-        nullptr,
-        nullptr,
-        nullptr,
-        &subKeyCount,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr
-      );
-
-      RegCloseKey(packagesKey);
-
-      if (status != ERROR_SUCCESS)
-        ERR(ApiUnavailable, "Could not query AppModel packages registry key");
-
-      return static_cast<u64>(subKeyCount);
-    });
+  auto CountWinGet(CacheManager& /*cache*/) -> Result<u64> {
+    ERR(NotSupported, "WinGet inventory is not exposed by the current native package backend");
   }
+
 } // namespace draconis::services::packages
   #endif // DRAC_ENABLE_PACKAGECOUNT
 

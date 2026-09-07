@@ -1490,7 +1490,15 @@ namespace draconis::ui {
       }
 
       if (!isInlineLogo && logoLines.empty()) {
-        const Vec<StringView> asciiLines = ascii::GetAsciiArt(data.operatingSystem->id);
+        StringView operatingSystem = data.operatingSystem ? StringView(data.operatingSystem->id) : StringView {};
+#ifdef _WIN32
+        if (operatingSystem.empty())
+          operatingSystem = "windows";
+#elif defined(__APPLE__)
+        if (operatingSystem.empty())
+          operatingSystem = "macos";
+#endif
+        const Vec<StringView> asciiLines = ascii::GetAsciiArt(operatingSystem);
 
         for (const auto& aLine : asciiLines) {
           logoLines.emplace_back(aLine);

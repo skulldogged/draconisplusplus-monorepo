@@ -34,7 +34,7 @@ namespace draconis::cli {
     const Config&               config,
     const f64                   pluginInitializationMs
   ) -> Vec<BenchmarkResult> {
-    using std::chrono::high_resolution_clock, std::chrono::duration;
+    using std::chrono::steady_clock, std::chrono::duration;
 
     Vec<BenchmarkResult> results;
     results.reserve(24);
@@ -47,9 +47,9 @@ namespace draconis::cli {
 
     // Time each data source individually
     auto timeOperation = [&results](const String& name, auto&& func) -> auto {
-      auto start  = high_resolution_clock::now();
+      auto start  = steady_clock::now();
       auto result = func();
-      auto end    = high_resolution_clock::now();
+      auto end    = steady_clock::now();
       auto dur    = duration<f64, std::milli>(end - start).count();
       results.push_back({ .name = name, .durationMs = dur, .success = static_cast<bool>(result) });
     };
@@ -79,54 +79,63 @@ namespace draconis::cli {
     // Benchmark info provider plugins
     auto& pluginManager = draconis::core::plugin::GetPluginManager();
     if (pluginManager.isInitialized()) {
-      pluginManager.loadPluginsOfType(draconis::core::plugin::PluginType::InfoProvider, cache);
-
-      // Create a PluginCache for benchmarking using the persistent cache directory
-      PluginCache pluginCache(utils::cache::CacheManager::getPersistentCacheDir() / "plugins");
+      timeOperation("Info provider initialization", [&]() -> Result<Unit> {
+        pluginManager.loadPluginsOfType(draconis::core::plugin::PluginType::InfoProvider, cache);
+        return {};
+      });
 
       // Then benchmark each info provider plugin
-      for (auto* plugin : pluginManager.getInfoProviderPlugins())
+      for (const auto& plugin : pluginManager.getInfoProviderPlugins()) {
+        const auto operationLock = plugin.lock();
         if (plugin && plugin->isReady() && plugin->isEnabled())
           timeOperation(std::format("Plugin: {}", plugin->getMetadata().name), [&]() -> Result<String> {
-            if (auto result = plugin->collectData(pluginCache); !result)
+            if (auto result = plugin->collectData(plugin.cache()); !result)
               return std::unexpected(result.error());
             return plugin->getDisplayValue();
           });
+      }
     }
 #endif
 
-    const auto       constructionStart = high_resolution_clock::now();
+    const auto       constructionStart = steady_clock::now();
     const SystemInfo benchmarkData(cache, config);
-    const auto       constructionEnd = high_resolution_clock::now();
+    const auto       constructionEnd = steady_clock::now();
     results.push_back({
       .name       = "SystemInfo Construction",
       .durationMs = duration<f64, std::milli>(constructionEnd - constructionStart).count(),
       .success    = true,
     });
 
-    const auto   uiStart    = high_resolution_clock::now();
+    const auto   uiStart    = steady_clock::now();
     const String renderedUi = ui::CreateUI(config, benchmarkData, true);
-    const auto   uiEnd      = high_resolution_clock::now();
+    const auto   uiEnd      = steady_clock::now();
     results.push_back({
       .name       = "UI Rendering",
       .durationMs = duration<f64, std::milli>(uiEnd - uiStart).count(),
       .success    = !renderedUi.empty(),
     });
 
+    results.push_back({
+      .name       = "Collection and rendering",
+      .durationMs = duration<f64, std::milli>(uiEnd - constructionStart).count(),
+      .success    = !renderedUi.empty(),
+    });
     return results;
   }
 
   auto PrintBenchmarkReport(const Vec<BenchmarkResult>& results) -> Unit {
-    f64 totalTime  = 0.0;
     f64 coreTime   = 0.0;
     f64 pluginTime = 0.0;
 
     // Separate core system results from plugin results
     Vec<BenchmarkResult> coreResults;
     Vec<BenchmarkResult> pluginResults;
+    Vec<BenchmarkResult> stageResults;
 
     for (const auto& result : results) {
-      if (result.name.starts_with("Plugin: "))
+      if (result.name == "SystemInfo Construction" || result.name == "UI Rendering" || result.name == "Collection and rendering")
+        stageResults.push_back(result);
+      else if (result.name.starts_with("Plugin: "))
         pluginResults.push_back(result);
       else
         coreResults.push_back(result);
@@ -144,6 +153,8 @@ namespace draconis::cli {
     for (const auto& result : coreResults)
       maxNameLen = std::max(maxNameLen, result.name.size());
     for (const auto& result : pluginResults)
+      maxNameLen = std::max(maxNameLen, result.name.size());
+    for (const auto& result : stageResults)
       maxNameLen = std::max(maxNameLen, result.name.size());
 
     // Helper to print a single result
@@ -182,9 +193,11 @@ namespace draconis::cli {
       Println("  Subtotal: {:>8.2f} ms ({} plugins)", pluginTime, pluginResults.size());
     }
 
-    totalTime = coreTime + pluginTime;
     Println();
-    Println("  Total: {:>8.2f} ms ({} data sources)", totalTime, results.size());
+    Println("  Diagnostic probe time: {:>8.2f} ms", coreTime + pluginTime);
+    Println("Collection/render pass (measured separately, after the probes):");
+    for (const auto& result : stageResults) printResult(result);
+    Println("Cache: {}", utils::cache::CacheManager::ignoreCache.load() ? "bypassed" : "enabled; earlier probes may warm entries");
   }
 
   auto PrintDoctorReport(
@@ -366,9 +379,10 @@ namespace draconis::cli {
     auto outputPlugins = pluginManager.getOutputFormatPlugins();
 
     // Look for a plugin that provides the requested format
-    const draconis::core::plugin::IOutputFormatPlugin* formatPlugin = nullptr;
+    draconis::core::plugin::PluginHandle<draconis::core::plugin::IOutputFormatPlugin> formatPlugin;
 
-    for (auto* plugin : outputPlugins) {
+    for (const auto& plugin : outputPlugins) {
+      const auto operationLock = plugin.lock();
       for (const auto& name : plugin->getFormatNames()) {
         if (name == formatName) {
           formatPlugin = plugin;
@@ -391,7 +405,8 @@ namespace draconis::cli {
     const auto& pluginData = data.pluginData;
 
     // Format output using plugin - format name determines the output mode
-    auto result = formatPlugin->formatOutput(formatName, outputData, pluginData);
+    const auto operationLock = formatPlugin.lock();
+    auto       result        = formatPlugin->formatOutput(formatName, outputData, pluginData);
     if (!result) {
       Print("Failed to format '{}' output: {}\n", formatName, result.error().message);
       return;
@@ -465,7 +480,8 @@ namespace draconis::cli {
       return EXIT_FAILURE;
     }
 
-    const auto& metadata = (*plugin)->getMetadata();
+    const auto  operationLock = plugin->lock();
+    const auto& metadata      = (*plugin)->getMetadata();
 
     Print("Plugin Information: {}\n", metadata.name);
     Print("========================\n");
@@ -492,7 +508,7 @@ namespace draconis::cli {
 
     // Show fields for InfoProvider plugins
     if (metadata.type == draconis::core::plugin::PluginType::InfoProvider) {
-      if (const auto* infoProviderPlugin = dynamic_cast<const draconis::core::plugin::IInfoProviderPlugin*>(*plugin)) {
+      if (const auto* infoProviderPlugin = dynamic_cast<const draconis::core::plugin::IInfoProviderPlugin*>(plugin->get())) {
         const auto fields = infoProviderPlugin->getFields();
         if (!fields.empty()) {
           Print("\nProvided Fields:\n");

@@ -21,7 +21,7 @@ categories = ["os", "hardware-support", "api-bindings"]
 thiserror = "1.0"
 
 [build-dependencies]
-bindgen = "0.69"
+bindgen = "0.72.1"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

@@ -292,14 +292,17 @@ auto main(const i32 argc, CStr* argv[]) -> i32 try {
       config.logo.height = opts.logoHeight;
 
 #if DRAC_ENABLE_PLUGINS
-    // Initialize plugin system early for maximum performance
+    // Core-only requests do not need plugin discovery; explicit auto-load remains eager.
     auto& pluginManager = draconis::core::plugin::GetPluginManager();
 
-    const auto pluginInitStart = std::chrono::steady_clock::now();
-    if (auto initResult = pluginManager.initialize(config.plugins); !initResult)
-      warn_log("Plugin system initialization failed: {}", initResult.error().message);
-    else
-      debug_log("Plugin system initialized successfully");
+    const auto pluginInitStart   = std::chrono::steady_clock::now();
+    const bool needsPluginSystem = opts.listPlugins || !opts.pluginInfo.empty() || opts.benchmarkMode || !opts.outputFormat.empty() || !config.plugins.autoLoad.empty() || SystemInfo::needsPlugins(config, opts.compactFormat, opts.doctorMode);
+    if (needsPluginSystem) {
+      if (auto initResult = pluginManager.initialize(config.plugins); !initResult)
+        warn_log("Plugin system initialization failed: {}", initResult.error().message);
+      else
+        debug_log("Plugin system initialized successfully");
+    }
     const f64 pluginInitializationMs = std::chrono::duration<f64, std::milli>(
                                          std::chrono::steady_clock::now() - pluginInitStart
     )
@@ -326,7 +329,7 @@ auto main(const i32 argc, CStr* argv[]) -> i32 try {
       return EXIT_SUCCESS;
     }
 
-    const SystemInfo data(cache, config, opts.compactFormat);
+    const SystemInfo data(cache, config, opts.compactFormat, opts.doctorMode || !opts.outputFormat.empty());
 
     if (opts.doctorMode) {
       PrintDoctorReport(data);

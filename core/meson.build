@@ -73,13 +73,34 @@ foreach option, define : {
 
   # Check if this is a feature option
   if option in feature_options
-    enabled = opt_val.enabled()
+    enabled = opt_val.allowed()
   else
     enabled = opt_val
   endif
 
   project_flag_defines += {define: enabled}
   feature_states += {option: enabled}
+endforeach
+
+# Resolve feature options before emitting their public macros.
+optional_platform_deps = []
+foreach option, names : {'xcb': ['xau', 'xcb', 'xcb-randr', 'xdmcp'], 'wayland': ['wayland-client'], 'pugixml': ['pugixml']}
+  supported = host_system in ['linux', 'freebsd', 'netbsd', 'openbsd', 'dragonfly']
+  resolved = supported and not get_option(option).disabled()
+  detected = []
+  if resolved
+    foreach name : names
+      dep = dependency(name, required: get_option(option))
+      resolved = resolved and dep.found()
+      detected += dep
+    endforeach
+  endif
+  if resolved
+    optional_platform_deps += detected
+  endif
+  feature_states += {option: resolved}
+  define = {'xcb': 'DRAC_USE_XCB', 'wayland': 'DRAC_USE_WAYLAND', 'pugixml': 'DRAC_USE_PUGIXML'}[option]
+  project_flag_defines += {define: resolved}
 endforeach
 
 # Plugin system: 'auto' enables the dynamic loader (it has no extra
@@ -93,6 +114,8 @@ endif
 
 project_flag_defines += {'DRAC_ENABLE_PLUGINS': plugins_enabled}
 feature_states += {'plugins': plugins_enabled}
+
+subdir('include/Drac++')
 
 cpp_args = []
 
@@ -131,7 +154,6 @@ cpp_args += cpp.get_supported_arguments(
     '-fno-strict-enums',
     '-fvisibility=hidden',
     '-fvisibility-inlines-hidden',
-    '-march=native',
 
     # Warning flags
     '-Wno-c++17-extensions',
@@ -149,6 +171,10 @@ cpp_args += cpp.get_supported_arguments(
     '-Wunused-function',
   ],
 )
+
+if get_option('native_tuning')
+  cpp_args += cpp.get_supported_arguments('-march=native')
+endif
 
 add_project_arguments(cpp_args, language: 'cpp')
 
@@ -189,7 +215,7 @@ includes_dep = declare_dependency(
 # ================ #
 #   Dependencies   #
 # ================ #
-lib_deps = [includes_dep]
+lib_deps = [includes_dep] + optional_platform_deps
 
 lib_deps += dependency(
   'magic_enum',
@@ -231,21 +257,6 @@ elif host_system == 'windows'
     cpp.find_library('iphlpapi'),
     cpp.find_library('ws2_32'),
   ]
-elif host_system not in ['serenity', 'haiku']
-  if feature_states['xcb']
-    lib_deps += dependency('xau', required: true)
-    lib_deps += dependency('xcb', required: true)
-    lib_deps += dependency('xcb-randr', required: true)
-    lib_deps += dependency('xdmcp', required: true)
-  endif
-
-  if feature_states['pugixml']
-    lib_deps += dependency('pugixml', required: true)
-  endif
-
-  if feature_states['wayland']
-    lib_deps += dependency('wayland-client', required: true)
-  endif
 endif
 
 # Glaze (JSON/BEVE serializer/deserializer)
@@ -286,4 +297,19 @@ if get_option('build_tests')
   subdir('tests')
 endif
 
-install_subdir('include/Drac++', install_dir: get_option('includedir') / 'Drac++')
+install_subdir('include/Drac++', install_dir: get_option('includedir'), exclude_files: ['meson.build', 'BuildConfig.hpp.in'])
+install_subdir('third_party', install_dir: get_option('includedir') / 'draconis-third-party', strip_directory: true)
+
+if not dependency('glaze', required: false).found()
+  install_subdir('../subprojects/glaze/include/glaze', install_dir: get_option('includedir'))
+endif
+import('pkgconfig').generate(libdrac,
+  filebase: 'draconis', name: 'Draconis C++ SDK',
+  description: 'C++26 system information library',
+  subdirs: ['.', 'draconis-third-party'],
+  libraries_private: lib_deps,
+  variables: {
+    'sdk_buildtype': get_option('buildtype'),
+    'sdk_vscrt': host_system == 'windows' ? get_option('b_vscrt') : '',
+  },
+)

@@ -88,12 +88,13 @@
       mesonFlags = [
         "-Dbuild_examples=false"
         "-Db_lto=true"
+        "-Dnative_tuning=${if native then "true" else "false"}"
         (lib.optionalString stdenv.isLinux "-Duse_linked_pci_ids=true")
         (lib.optionalString stdenv.isLinux "-Dpci_ids_path=${pkgs.pciutils}/share/pci.ids")
       ];
 
       configurePhase = ''
-        meson setup build --buildtype=release $mesonFlags
+        meson setup build --prefix=/ --buildtype=release $mesonFlags
       '';
 
       buildPhase = ''
@@ -105,16 +106,7 @@
       '';
 
       installPhase = ''
-        mkdir -p $out/bin $out/lib
-        mv build/core/src/CLI/draconis++ $out/bin/draconis++
-        mv build/core/src/Lib/libdrac++.a $out/lib/
-        if [ -d build/plugins ]; then
-          mkdir -p $out/lib/draconis++/plugins
-          find build/plugins -maxdepth 1 \( -name '*.so' -o -name '*.dylib' \) \
-            -exec cp {} $out/lib/draconis++/plugins/ \;
-        fi
-        mkdir -p $out/include
-        cp -r core/include/Drac++ $out/include/
+        meson install -C build --no-rebuild --destdir "$out"
       '';
 
       postFixup = lib.optionalString stdenv.isDarwin ''

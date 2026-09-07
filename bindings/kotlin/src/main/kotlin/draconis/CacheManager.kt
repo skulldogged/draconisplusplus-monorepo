@@ -1,20 +1,30 @@
 package draconis
 
 class CacheManager : AutoCloseable {
-    private val handle: Long = nativeCreateManager()
+    private var handle: Long = nativeCreateManager().also {
+        check(it != 0L) { "Failed to create native CacheManager" }
+    }
 
+    private fun requireHandle(): Long {
+        check(handle != 0L) { "CacheManager is closed" }
+        return handle
+    }
+
+    @Synchronized
     fun memInfo(): ResourceUsage {
-        val arr = nativeGetMemInfo(handle)
+        val arr = nativeGetMemInfo(requireHandle())
         return ResourceUsage(arr[0], arr[1])
     }
 
+    @Synchronized
     fun cpuCores(): CpuCores {
-        val arr = nativeGetCpuCores(handle)
+        val arr = nativeGetCpuCores(requireHandle())
         return CpuCores(arr[0], arr[1])
     }
 
+    @Synchronized
     fun operatingSystem(): OsInfo {
-        val arr = nativeGetOperatingSystem(handle)
+        val arr = nativeGetOperatingSystem(requireHandle())
         return OsInfo(
             name = arr[0] ?: "",
             version = arr[1] ?: "",
@@ -22,47 +32,65 @@ class CacheManager : AutoCloseable {
         )
     }
 
-    fun desktopEnvironment(): String? = nativeGetDesktopEnvironment(handle)
+    @Synchronized
+    fun desktopEnvironment(): String? = nativeGetDesktopEnvironment(requireHandle())
 
-    fun windowManager(): String? = nativeGetWindowManager(handle)
+    @Synchronized
+    fun windowManager(): String? = nativeGetWindowManager(requireHandle())
 
-    fun shell(): String? = nativeGetShell(handle)
+    @Synchronized
+    fun shell(): String? = nativeGetShell(requireHandle())
 
-    fun host(): String? = nativeGetHost(handle)
+    @Synchronized
+    fun host(): String? = nativeGetHost(requireHandle())
 
-    fun cpuModel(): String? = nativeGetCPUModel(handle)
+    @Synchronized
+    fun cpuModel(): String? = nativeGetCPUModel(requireHandle())
 
-    fun gpuModel(): String? = nativeGetGPUModel(handle)
+    @Synchronized
+    fun gpuModel(): String? = nativeGetGPUModel(requireHandle())
 
-    fun kernelVersion(): String? = nativeGetKernelVersion(handle)
+    @Synchronized
+    fun kernelVersion(): String? = nativeGetKernelVersion(requireHandle())
 
+    @Synchronized
     fun diskUsage(): ResourceUsage {
-        val arr = nativeGetDiskUsage(handle)
+        val arr = nativeGetDiskUsage(requireHandle())
         return ResourceUsage(arr[0], arr[1])
     }
 
-    fun disks(): List<DiskInfo> = nativeGetDisks(handle).toList()
+    @Synchronized
+    fun disks(): List<DiskInfo> = nativeGetDisks(requireHandle()).toList()
 
-    fun systemDisk(): DiskInfo = nativeGetSystemDisk(handle)
+    @Synchronized
+    fun systemDisk(): DiskInfo = nativeGetSystemDisk(requireHandle())
 
-    fun outputs(): List<DisplayInfo> = nativeGetOutputs(handle).toList()
+    @Synchronized
+    fun outputs(): List<DisplayInfo> = nativeGetOutputs(requireHandle()).toList()
 
-    fun primaryOutput(): DisplayInfo = nativeGetPrimaryOutput(handle)
+    @Synchronized
+    fun primaryOutput(): DisplayInfo = nativeGetPrimaryOutput(requireHandle())
 
-    fun networkInterfaces(): List<NetworkInterface> = nativeGetNetworkInterfaces(handle).toList()
+    @Synchronized
+    fun networkInterfaces(): List<NetworkInterface> = nativeGetNetworkInterfaces(requireHandle()).toList()
 
-    fun primaryNetworkInterface(): NetworkInterface = nativeGetPrimaryNetworkInterface(handle)
+    @Synchronized
+    fun primaryNetworkInterface(): NetworkInterface = nativeGetPrimaryNetworkInterface(requireHandle())
 
+    @Synchronized
     fun batteryInfo(): Battery {
-        val arr = nativeGetBatteryInfo(handle)
+        val arr = nativeGetBatteryInfo(requireHandle())
         val status = BatteryStatus.fromCode(arr[0].toInt())
         val pct = arr[1].toInt().takeIf { it != 255 }
         val time = arr[2].takeIf { it != -1L }
         return Battery(status, pct, time)
     }
 
+    @Synchronized
     override fun close() {
-        nativeDestroyManager(handle)
+        val previous = handle
+        handle = 0L
+        if (previous != 0L) nativeDestroyManager(previous)
     }
 
     private external fun nativeCreateManager(): Long

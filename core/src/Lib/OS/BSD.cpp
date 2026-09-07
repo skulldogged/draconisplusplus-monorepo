@@ -243,17 +243,9 @@ namespace draconis::core::system {
     });
   }
 
-  auto GetMemInfo() -> Result<u64> {
-    u64   mem  = 0;
-    usize size = sizeof(mem);
-
-  #ifdef __NetBSD__
-    sysctlbyname("hw.physmem64", &mem, &size, nullptr, 0);
-  #else
-    sysctlbyname("hw.physmem", &mem, &size, nullptr, 0);
-  #endif
-
-    return mem;
+  auto GetMemInfo(CacheManager& /*cache*/) -> Result<ResourceUsage> {
+    // Total RAM alone cannot satisfy the used/total public contract.
+    ERR(NotSupported, "Memory usage is not implemented for this BSD backend");
   }
 
   auto GetWindowManager(CacheManager& cache) -> Result<String> {

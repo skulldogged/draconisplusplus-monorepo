@@ -168,11 +168,14 @@ def cmd_registry(args: argparse.Namespace) -> None:
     lines += [
         "namespace draconis::core::plugin {",
         "  auto DracInitStaticPlugins() -> std::size_t {",
+        "    static const auto count = [] {",
     ]
     for cls in classes:
         lines.append(f"    DracRegisterPlugin_{cls}();")
     lines += [
-        f"    return {len(classes)};",
+        f"      return std::size_t{{{len(classes)}}};",
+        "    }();",
+        "    return count;",
         "  }",
         "} // namespace draconis::core::plugin",
         "",

@@ -425,14 +425,26 @@ namespace {
 #endif
   }
 
+  auto FillPrimaryDisplay([[maybe_unused]] CacheManager& cache, DisplayInfoResponse& info) -> void {
+#ifdef _WIN32
+    if (info.displays)
+      if (const auto primary = std::ranges::find_if(*info.displays, [](const DisplayInfo& display) -> bool { return display.isPrimary; }); primary != info.displays->end())
+        info.primaryDisplay = *primary;
+#else
+    // Other backends have distinct primary-display queries and selection rules.
+    if (auto primary = GetPrimaryOutput(cache); primary)
+      info.primaryDisplay = std::move(*primary);
+#endif
+  }
+
   auto NetworkInfoHandler() -> ToolResponse {
     CacheManager& cacheManager = GetCacheManager();
 
     NetworkInfoResponse info;
-    if (Result<Vec<NetworkInterface>> res = GetNetworkInterfaces(cacheManager); res)
-      info.interfaces = *res;
-    if (Result<NetworkInterface> res = GetPrimaryNetworkInterface(cacheManager); res)
-      info.primaryInterface = *res;
+    if (auto snapshot = GetNetworkSnapshot(cacheManager); snapshot) {
+      info.interfaces       = std::move(snapshot->interfaces);
+      info.primaryInterface = std::move(snapshot->primaryInterface);
+    }
 
     return { makeSuccessResult(info) };
   }
@@ -446,8 +458,7 @@ namespace {
       return { makeErrorResult("Failed to get displays: " + displaysResult.error().message), true };
     info.displays = std::move(*displaysResult);
 
-    if (Result<DisplayInfo> res = GetPrimaryOutput(cacheManager); res)
-      info.primaryDisplay = *res;
+    FillPrimaryDisplay(cacheManager, info);
 
     if (info.displays->empty())
       return { makeErrorResult("No displays found"), true };
@@ -493,11 +504,13 @@ namespace {
     tryAssign(info.hardware.memInfo, GetMemInfo(cacheManager));
     tryAssign(info.hardware.diskUsage, GetDiskUsage(cacheManager));
 
-    tryAssign(info.network.interfaces, GetNetworkInterfaces(cacheManager));
-    tryAssign(info.network.primaryInterface, GetPrimaryNetworkInterface(cacheManager));
+    if (auto snapshot = GetNetworkSnapshot(cacheManager); snapshot) {
+      info.network.interfaces       = std::move(snapshot->interfaces);
+      info.network.primaryInterface = std::move(snapshot->primaryInterface);
+    }
 
     tryAssign(info.display.displays, GetOutputs(cacheManager));
-    tryAssign(info.display.primaryDisplay, GetPrimaryOutput(cacheManager));
+    FillPrimaryDisplay(cacheManager, info.display);
 
     if (Result<std::chrono::seconds> res = GetUptime(); res) {
       const u32 seconds          = res->count();

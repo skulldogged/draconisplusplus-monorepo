@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <ctime>
 #include <exception>
@@ -65,8 +66,8 @@ namespace draconis::core::system {
     };
 
     struct CompactSelection {
-      u32  fields {};
-      bool hasPluginField {};
+      u32         fields {};
+      Vec<String> pluginKeys;
 
       [[nodiscard]] auto contains(CompactField field) const -> bool {
         return (fields & static_cast<u32>(field)) != 0;
@@ -109,8 +110,8 @@ namespace draconis::core::system {
           break;
 
         const StringView key = compactTemplate.substr(position + 1, end - position - 1);
-        if (key.starts_with("plugin_"))
-          selection.hasPluginField = true;
+        if (key.starts_with("plugin_") || key == "weather" || key == "playing")
+          selection.pluginKeys.emplace_back(key);
 
         const auto field = std::ranges::find_if(COMPACT_FIELDS, [key](const auto& candidate) -> bool {
           return candidate.first == key;
@@ -123,6 +124,50 @@ namespace draconis::core::system {
 
       return selection;
     }
+
+    auto ParseLayoutSelection(const Config& config) -> CompactSelection {
+      CompactSelection selection;
+      for (const auto& group : config.ui.layout)
+        for (const auto& row : group.rows) {
+          if (row.key.starts_with("plugin.")) {
+            selection.pluginKeys.push_back(row.key);
+            continue;
+          }
+          String key = row.key;
+          std::ranges::transform(key, key.begin(), [](unsigned char value) -> char { return static_cast<char>(std::tolower(value)); });
+          if (key == "package")
+            key = "packages";
+          const auto field = std::ranges::find_if(COMPACT_FIELDS, [&key](const auto& candidate) -> bool { return candidate.first == key; });
+          if (field != COMPACT_FIELDS.end())
+            selection.fields |= static_cast<u32>(field->second);
+          // The DE row suppresses itself when it equals the window manager.
+          if (key == "de")
+            selection.fields |= static_cast<u32>(CompactField::WindowManager);
+        }
+#ifdef __linux__
+      // Linux row icons depend on the distro even without an OS row.
+      selection.fields |= static_cast<u32>(CompactField::OsId);
+#endif
+      return selection;
+    }
+
+#if DRAC_ENABLE_PLUGINS
+    auto MatchesProvider(const Vec<String>& keys, StringView id) -> bool {
+      return std::ranges::any_of(keys, [id](StringView key) -> bool {
+        if ((key == "weather" && id == "weather") || (key == "playing" && id == "now_playing"))
+          return true;
+        if (key.starts_with("plugin.")) {
+          key.remove_prefix(7);
+          return key == id || (key.starts_with(id) && key.size() > id.size() && key[id.size()] == '.');
+        }
+        if (key.starts_with("plugin_")) {
+          key.remove_prefix(7);
+          return key.starts_with(id) && key.size() > id.size() && key[id.size()] == '_';
+        }
+        return false;
+      });
+    }
+#endif
 
     auto GetDate() -> Result<String> {
       using std::chrono::system_clock;
@@ -164,15 +209,32 @@ namespace draconis::core::system {
     }
   } // namespace
 
+  auto SystemInfo::needsPlugins(const Config& config, StringView compactTemplate, bool fullCollection) -> bool {
+#if DRAC_ENABLE_PLUGINS
+    if (!config.plugins.enabled)
+      return false;
+    if (fullCollection || (compactTemplate.empty() && config.ui.layout.empty()))
+      return true;
+    const auto selection = compactTemplate.empty() ? ParseLayoutSelection(config) : ParseCompactSelection(compactTemplate);
+    return !selection.pluginKeys.empty();
+#else
+    (void)config;
+    (void)compactTemplate;
+    (void)fullCollection;
+    return false;
+#endif
+  }
+
   SystemInfo::SystemInfo(
     utils::cache::CacheManager& cache,
     const Config&               config,
-    StringView                  compactTemplate
+    StringView                  compactTemplate,
+    bool                        fullCollection
   ) {
     debug_log("SystemInfo: Starting construction");
 
-    const bool             collectAll = compactTemplate.empty();
-    const CompactSelection selection  = ParseCompactSelection(compactTemplate);
+    const bool             collectAll = fullCollection || (compactTemplate.empty() && config.ui.layout.empty());
+    const CompactSelection selection  = compactTemplate.empty() ? ParseLayoutSelection(config) : ParseCompactSelection(compactTemplate);
     const auto             wants      = [&](CompactField field) -> bool {
       return collectAll || selection.contains(field);
     };
@@ -240,8 +302,8 @@ namespace draconis::core::system {
 #endif
 
 #if DRAC_ENABLE_PLUGINS
-    if (collectAll || selection.hasPluginField)
-      collectPluginData(cache);
+    if (config.plugins.enabled && (collectAll || !selection.pluginKeys.empty()))
+      collectPluginData(cache, [&](StringView id) -> bool { return collectAll || MatchesProvider(selection.pluginKeys, id); });
 #endif
     debug_log("SystemInfo: Construction complete");
   }
@@ -317,13 +379,19 @@ namespace draconis::core::system {
     for (const auto& [pluginId, fields] : pluginData)
       for (const auto& [fieldName, value] : fields)
         data[std::format("plugin_{}_{}", pluginId, fieldName)] = draconis::core::plugin::PluginFieldToString(value);
+    for (const auto& [alias, provider] : {
+           std::pair { "weather",     "weather" },
+           std::pair { "playing", "now_playing" }
+    })
+      if (const auto display = pluginDisplay.find(provider); display != pluginDisplay.end() && display->second.value)
+        data[alias] = *display->second.value;
 #endif
 
     return data;
   }
 
 #if DRAC_ENABLE_PLUGINS
-  auto SystemInfo::collectPluginData(utils::cache::CacheManager& cache) -> Unit {
+  auto SystemInfo::collectPluginData(utils::cache::CacheManager& cache, const std::function<bool(StringView)>& providerFilter) -> Unit {
     using draconis::core::plugin::GetPluginManager;
 
     auto& pluginManager = GetPluginManager();
@@ -332,10 +400,14 @@ namespace draconis::core::system {
     if (!pluginManager.isInitialized())
       return;
 
-    pluginManager.loadPluginsOfType(draconis::core::plugin::PluginType::InfoProvider, cache);
+    pluginManager.loadPluginsOfType(draconis::core::plugin::PluginType::InfoProvider, cache, providerFilter);
 
     // Get all info provider plugins (high-performance lookup)
-    const auto infoProviderPlugins = pluginManager.getInfoProviderPlugins();
+    auto infoProviderPlugins = pluginManager.getInfoProviderPlugins();
+    std::erase_if(infoProviderPlugins, [&providerFilter](const auto& plugin) -> bool {
+      const auto lock = plugin.lock();
+      return !providerFilter(plugin->getProviderId());
+    });
 
     debug_log("Found {} info provider plugins", infoProviderPlugins.size());
 
@@ -349,7 +421,8 @@ namespace draconis::core::system {
       bool                                 collected = false;
     };
 
-    const auto collectOne = [](IInfoProviderPlugin* plugin) -> Option<CollectedPlugin> {
+    const auto collectOne = [](const draconis::core::plugin::PluginHandle<IInfoProviderPlugin>& plugin) -> Option<CollectedPlugin> {
+      const auto operationLock = plugin.lock();
       if (!plugin || !plugin->isReady() || !plugin->isEnabled())
         return None;
 
@@ -363,7 +436,7 @@ namespace draconis::core::system {
       };
 
       try {
-        PluginCache pluginCache(utils::cache::CacheManager::getPersistentCacheDir() / "plugins");
+        auto& pluginCache = plugin.cache();
         if (auto result = plugin->collectData(pluginCache); result) {
           collected.fields    = plugin->getFields();
           collected.collected = true;
@@ -411,7 +484,7 @@ namespace draconis::core::system {
             const usize index = nextPlugin.fetch_add(1, std::memory_order_relaxed);
             if (index >= infoProviderPlugins.size())
               break;
-            if (auto collected = collectOne(infoProviderPlugins.subspan(index).front()))
+            if (auto collected = collectOne(infoProviderPlugins.at(index)))
               collectedPlugins.emplace_back(std::move(*collected));
           }
           return collectedPlugins;

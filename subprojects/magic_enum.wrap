@@ -2,6 +2,7 @@
 url = https://github.com/Neargye/magic_enum.git
 revision = v0.9.7
 depth = 1
+diff_files = magic-enum-catch2-new.patch
 
 [provide]
 dependency_names = magic_enum

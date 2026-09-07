@@ -1,6 +1,7 @@
 # Build directories
 build/
 build-rust/
+/build-*/
 cmake-build-*/
 out/
 bin/
@@ -91,11 +92,18 @@ subprojects/*
 !subprojects/*.wrap.lock
 !subprojects/packagefiles/
 
+# Standalone Python binding dependency downloads (keep wrap definitions)
+/bindings/python/subprojects/*
+!/bindings/python/subprojects/*.wrap
+!/bindings/python/subprojects/packagefiles/
+
 # Logs and temporary files
 *.log
 *.tmp
 *.temp
 .cache/
+*.etl
+*.etl.NGENPDB/
 
 # Test coverage
 coverage/

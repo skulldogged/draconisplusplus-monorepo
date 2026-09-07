@@ -25,6 +25,8 @@
 #include <variant>                  // std::variant (Variant)
 #include <vector>                   // std::vector (Vec)
 
+#include <Drac++/BuildConfig.hpp>
+
 namespace draconis::utils {
   // Forward decl for Result and Err
   namespace error {

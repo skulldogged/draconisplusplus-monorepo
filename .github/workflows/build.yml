@@ -5,13 +5,15 @@ on:
     branches:
       - main
       - master
+  pull_request:
 
 concurrency:
-  group: ${{ github.workflow }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   linux:
+    if: github.event_name != 'pull_request'
     name: Linux
     runs-on: native-linux
     permissions:
@@ -37,7 +39,7 @@ jobs:
           CACHIX_SIGNING_KEY: ${{ secrets.CACHIX_SIGNING_KEY }}
 
       - name: Upload Nix musl-generic Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: linux-build
           path: ${{ steps.build.outputs.path }}/bin/draconis++

@@ -575,6 +575,25 @@ namespace draconis::core::system {
    */
   auto GetPrimaryNetworkInterface(utils::cache::CacheManager& cache) -> utils::types::Result<utils::types::NetworkInterface>;
 
+  // Grouped query; Windows derives both values from one fresh adapter enumeration.
+  struct NetworkSnapshot {
+    utils::types::Vec<utils::types::NetworkInterface>    interfaces;
+    utils::types::Option<utils::types::NetworkInterface> primaryInterface;
+  };
+#ifdef _WIN32
+  auto GetNetworkSnapshot(utils::cache::CacheManager& cache) -> utils::types::Result<NetworkSnapshot>;
+#else
+  inline auto GetNetworkSnapshot(utils::cache::CacheManager& cache) -> utils::types::Result<NetworkSnapshot> {
+    auto interfaces = GetNetworkInterfaces(cache);
+    if (!interfaces)
+      return std::unexpected(interfaces.error());
+    NetworkSnapshot snapshot { .interfaces = std::move(*interfaces), .primaryInterface = {} };
+    if (auto primary = GetPrimaryNetworkInterface(cache); primary)
+      snapshot.primaryInterface = std::move(*primary);
+    return snapshot;
+  }
+#endif
+
   /**
    * @brief Fetches the battery information.
    * @return The battery information.
