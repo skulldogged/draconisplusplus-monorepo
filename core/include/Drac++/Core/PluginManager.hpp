@@ -87,6 +87,7 @@ namespace draconis::core::plugin {
     static auto getDestroyPluginFunc(DynamicLibraryHandle) -> Result<void (*)(IPlugin*)>;
     static auto syncPluginLogLevel(DynamicLibraryHandle) -> void;
     auto        constructPlugin(const String&, const Option<fs::path>& = {}) -> Result<std::shared_ptr<LoadedPlugin>>;
+    auto        scanForPluginsLocked() -> Result<Unit>;
 
    public:
     PluginManager(const PluginManager&)                    = delete;
@@ -116,6 +117,8 @@ namespace draconis::core::plugin {
     }
     auto listLoadedPlugins() const -> Vec<PluginMetadata>;
     auto listDiscoveredPlugins() const -> Vec<String>;
+    // Inspect any discovered plugin without initializing or retaining it in the manager.
+    auto getPluginMetadata(const String&) -> Result<PluginMetadata>;
     auto isPluginLoaded(const String&) const -> bool;
   };
 #else

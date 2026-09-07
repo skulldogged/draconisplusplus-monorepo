@@ -1,5 +1,7 @@
+#include <barrier>
 #include <boost/ut.hpp>
 #include <draconis_c.h>
+#include <fstream>
 #include <future>
 
 #include <Drac++/Core/PluginManager.hpp>
@@ -27,6 +29,21 @@ namespace {
       ready = false;
     }
   };
+
+  class DirectoryPlugin : public FixturePlugin {
+   public:
+    int  initializeCalls = 0;
+    auto initialize(const draconis::core::plugin::PluginContext& context, PluginCache&) -> Result<Unit> override {
+      ++initializeCalls;
+      for (const auto& directory : { context.configDir, context.cacheDir, context.dataDir }) {
+        std::ofstream output(directory / "directory-fixture");
+        if (!(output << "initialized"))
+          return draconis::utils::types::Err(draconis::utils::error::DracError(draconis::utils::error::DracErrorCode::IoError, "missing context directory"));
+      }
+      ready = true;
+      return {};
+    }
+  };
 } // namespace
 
 auto main(int argc, char** argv) -> int {
@@ -35,6 +52,55 @@ auto main(int argc, char** argv) -> int {
   auto& manager = GetPluginManager();
   RegisterStaticPlugin("lifecycle_fixture", { []() -> IPlugin* { return new ReentrantPlugin; }, [](IPlugin* value) { delete value; } });
   CacheManager cache;
+
+  "Context directories exist before initialization and failures are retryable"_test = [&] {
+    const auto context  = GetPluginContext();
+    auto       loaded   = std::make_shared<LoadedPlugin>();
+    auto       instance = std::make_shared<DirectoryPlugin>();
+    loaded->instance    = instance;
+    loaded->cache       = std::make_shared<PluginCache>(context.cacheDir);
+    // The isolated test profile starts without a data directory. A file at
+    // that path must produce an I/O error without invoking the plugin.
+    fs::create_directories(context.dataDir.parent_path());
+    { std::ofstream blocker(context.dataDir); }
+    const auto failed = InitializePlugin(loaded);
+    expect(!failed);
+    if (!failed)
+      expect(failed.error().code == draconis::utils::error::DracErrorCode::IoError);
+    expect(instance->initializeCalls == 0_i);
+    fs::remove(context.dataDir);
+    expect(InitializePlugin(loaded).has_value());
+    expect(instance->initializeCalls == 1_i);
+    for (const auto& directory : { context.configDir, context.cacheDir, context.dataDir })
+      expect(fs::is_regular_file(directory / "directory-fixture"));
+  };
+
+  const auto discoveryDir = fs::temp_directory_path() / "plugin-discovery-fixture";
+  if (argc == 3) {
+    fs::create_directories(discoveryDir);
+    fs::copy_file(argv[1], discoveryDir / ("discovered_fixture" + fs::path(argv[1]).extension().string()));
+    manager.addSearchPath(discoveryDir);
+  }
+  "Concurrent first initialization publishes complete discovery"_test = [&] {
+    expect(argc == 3_i);
+    if (argc != 3)
+      return;
+    for (int round = 0; round < 4; ++round) {
+      manager.shutdown();
+      std::barrier                   start(16);
+      std::vector<std::future<bool>> callers;
+      for (int index = 0; index < 16; ++index)
+        callers.push_back(std::async(std::launch::async, [&] {
+          start.arrive_and_wait();
+          if (!manager.initialize())
+            return false;
+          return manager.createInfoProvider("discovered_fixture").has_value();
+        }));
+      for (auto& caller : callers)
+        expect(caller.get());
+    }
+    manager.shutdown();
+  };
 
   "Owning snapshots survive unload and direct-load shutdown"_test = [&] {
     manager.shutdown();
@@ -106,6 +172,44 @@ auto main(int argc, char** argv) -> int {
     DracFreePluginFieldList(&fields);
     DracUnloadPlugin(plugin);
     DracDestroyCacheManager(nativeCache);
+  };
+
+  "Discovery returns static and dynamic metadata without loading providers"_test = [&] {
+    manager.shutdown();
+    auto discovered  = DracDiscoverPlugins();
+    bool foundStatic = false, foundDynamic = false;
+    for (size_t index = 0; index < discovered.count; ++index) {
+      const auto&            item = discovered.items[index];
+      const std::string_view name(item.name);
+      if (name != "lifecycle_fixture" && name != "discovered_fixture")
+        continue;
+      foundStatic |= name == "lifecycle_fixture";
+      foundDynamic |= name == "discovered_fixture";
+      expect(item.version && item.author && item.description);
+      if (item.version && item.author && item.description) {
+        expect(std::string_view(item.version) == "1");
+        expect(std::string_view(item.author) == "tests");
+        expect(std::string_view(item.description) == "Local fixture");
+      }
+      expect(!manager.isPluginLoaded(std::string(name)));
+    }
+    expect(foundStatic && foundDynamic);
+    DracFreePluginInfoList(&discovered);
+  };
+
+  "Failed manager initialization remains retryable"_test = [&] {
+    manager.shutdown();
+    const auto blockedPath = discoveryDir / "blocked-search-path";
+    { std::ofstream blocker(blockedPath); }
+    manager.addSearchPath(blockedPath);
+    expect(!manager.initialize());
+    expect(!manager.isInitialized());
+    expect(!manager.initialize());
+    expect(!manager.isInitialized());
+    fs::remove(blockedPath);
+    fs::create_directory(blockedPath);
+    expect(manager.initialize().has_value());
+    expect(manager.isInitialized());
   };
   manager.shutdown();
 }

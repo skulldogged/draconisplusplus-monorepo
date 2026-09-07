@@ -17,6 +17,13 @@ remain usable. Shutdown and the factory destructor run when the final instance
 owner goes away, followed by release of its library. Manager callbacks run outside
 the global manager lock. Failed initialization is retryable.
 
+Manager initialization publishes readiness only after the directory scan succeeds.
+Plugin context directories are created before invoking a plugin's initialization
+callback; filesystem errors are returned and initialization can be retried. C
+discovery copies metadata from temporary instances without initializing providers.
+An incompatible or unreadable module can still appear by name with unavailable
+metadata.
+
 C handles own independent instances in both static and dynamic mode. Configure the
 instance before initialization; initialization is idempotent. Loading from a path
 uses that exact path. C calls translate exceptions to documented error results,
@@ -70,6 +77,10 @@ for C++ and `dependency('draconis-c')` for C. Windows archive resolution should 
 through Meson/pkg-config dependency handling rather than assuming `.lib` filenames
 for LLVM-created `.a` archives. Nix uses Meson's install plan. `native_tuning` is
 opt-in; optional platform dependencies are detected in auto mode.
+
+The installed `draconis.pc` records `sdk_buildtype` and, on Windows, `sdk_vscrt`.
+The installed-consumer verifier uses those settings so its STL debug ABI and CRT
+match the producer. Other C++ consumers must also use compatible build settings.
 
 Run `meson test -C build --print-errorlogs`. The suite includes isolated cache
 fixtures, malformed and large Windows topology records, static/dynamic plugin

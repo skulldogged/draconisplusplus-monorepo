@@ -796,19 +796,26 @@ extern "C" {
 
   auto DracDiscoverPlugins(void) -> DracPluginInfoList try {
     auto& manager = GetPluginManager();
-    (void)manager.initialize();
-    (void)manager.scanForPlugins();
+    if (!manager.initialize() || !manager.scanForPlugins())
+      return {};
     const auto         names = manager.listDiscoveredPlugins();
     DracPluginInfoList result { .items = new DracPluginInfo[names.size()] {}, .count = names.size() };
     try {
       for (size_t i = 0; i < names.size(); ++i) {
         result.items[i].name = DupString(names[i]);
-        if (auto plugin = manager.getPlugin(names[i])) {
-          const auto  lock            = plugin->lock();
-          const auto& metadata        = (*plugin)->getMetadata();
-          result.items[i].version     = DupString(metadata.version);
-          result.items[i].author      = DupString(metadata.author);
-          result.items[i].description = DupString(metadata.description);
+        // Invalid/incompatible modules remain discoverable by name. Inspect
+        // valid candidates without initializing them or adding manager ownership.
+        Option<PluginMetadata> metadata;
+        try {
+          if (auto inspected = manager.getPluginMetadata(names[i]); inspected)
+            metadata = std::move(*inspected);
+        } catch (const std::bad_alloc&) {
+          throw;
+        } catch (...) {}
+        if (metadata) {
+          result.items[i].version     = DupString(metadata->version);
+          result.items[i].author      = DupString(metadata->author);
+          result.items[i].description = DupString(metadata->description);
         }
       }
     } catch (...) {

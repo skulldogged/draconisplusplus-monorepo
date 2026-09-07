@@ -168,17 +168,25 @@ namespace draconis::core::plugin {
   }
 
   auto PluginManager::initialize(const PluginConfig& config) -> Result<Unit> {
+    (void)DracInitStaticPlugins();
     {
       const std::unique_lock lock(m_mutex);
-      if (m_initialized.exchange(true))
+      if (m_initialized)
         return {};
+      if (config.enabled) {
+        for (const auto& path : GetDefaultPluginPaths())
+          if (std::ranges::find(m_pluginSearchPaths, path) == m_pluginSearchPaths.end())
+            m_pluginSearchPaths.push_back(path);
+        const auto scanned = scanForPluginsLocked();
+        if (!scanned)
+          return scanned;
+      }
+      // Publish only a complete discovery map. Auto-load callbacks below may
+      // reenter the manager and must run without its global lock held.
+      m_initialized = true;
     }
-    (void)DracInitStaticPlugins();
     if (!config.enabled)
       return {};
-    for (const auto& path : GetDefaultPluginPaths())
-      addSearchPath(path);
-    TRY_VOID(scanForPlugins());
     CacheManager cache;
     for (const auto& name : config.autoLoad)
       if (auto result = loadPlugin(name, cache); !result)
@@ -192,8 +200,10 @@ namespace draconis::core::plugin {
       const std::unique_lock lock(m_mutex);
       retired.swap(m_plugins);
       m_loading.clear();
+      m_discoveredPlugins.clear();
       m_providerMetadata.clear();
       ++m_generation;
+      ++m_discoveryGeneration;
       m_initialized = false;
     }
     // Destructors and plugin callbacks run outside the manager lock.
@@ -212,11 +222,20 @@ namespace draconis::core::plugin {
 
   auto PluginManager::scanForPlugins() -> Result<Unit> {
     const std::unique_lock lock(m_mutex);
-    Map<String, fs::path>  discovered;
-    std::error_code        error;
+    return scanForPluginsLocked();
+  }
+
+  auto PluginManager::scanForPluginsLocked() -> Result<Unit> {
+    Map<String, fs::path> discovered;
+    std::error_code       error;
     for (const auto& searchPath : m_pluginSearchPaths) {
-      if (!fs::is_directory(searchPath, error))
+      const auto status = fs::status(searchPath, error);
+      if (error && error != std::errc::no_such_file_or_directory)
+        ERR_FMT(IoError, "Cannot inspect plugin directory '{}': {}", searchPath.string(), error.message());
+      if (error == std::errc::no_such_file_or_directory || status.type() == fs::file_type::not_found)
         continue;
+      if (!fs::is_directory(status))
+        ERR_FMT(IoError, "Plugin search path is not a directory: {}", searchPath.string());
       fs::directory_iterator entries(searchPath, error), end;
       while (!error && entries != end) {
         if (entries->is_regular_file(error) && entries->path().extension() == PLUGIN_EXTENSION)
@@ -449,6 +468,20 @@ namespace draconis::core::plugin {
     return m_plugins.contains(name);
   }
 
+  auto PluginManager::getPluginMetadata(const String& name) -> Result<PluginMetadata> {
+    {
+      const std::shared_lock lock(m_mutex);
+      if (const auto iter = m_plugins.find(name); iter != m_plugins.end())
+        return iter->second->metadata;
+    }
+    // Constructors and destructors may reenter the manager. Copy all strings
+    // before releasing the temporary instance and its dynamic library.
+    const auto plugin = constructPlugin(name);
+    if (!plugin)
+      return std::unexpected(plugin.error());
+    return (*plugin)->metadata;
+  }
+
   auto PluginManager::loadDynamicLibrary(const fs::path& path) -> Result<DynamicLibraryHandle> {
   #ifdef _WIN32
     HMODULE handle = LoadLibraryA(path.string().c_str());
@@ -530,7 +563,13 @@ namespace draconis::core::plugin {
     if (plugin->initialized)
       return {};
     const auto context = GetPluginContext();
-    const auto result  = plugin->instance->initialize(context, *plugin->cache);
+    for (const auto& directory : { context.configDir, context.cacheDir, context.dataDir }) {
+      std::error_code error;
+      fs::create_directories(directory, error);
+      if (error)
+        ERR_FMT(IoError, "Cannot create plugin directory '{}': {}", directory.string(), error.message());
+    }
+    const auto result = plugin->instance->initialize(context, *plugin->cache);
     if (!result)
       return result;
     plugin->ready = plugin->instance->isReady();

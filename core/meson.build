@@ -308,4 +308,8 @@ import('pkgconfig').generate(libdrac,
   description: 'C++26 system information library',
   subdirs: ['.', 'draconis-third-party'],
   libraries_private: lib_deps,
+  variables: {
+    'sdk_buildtype': get_option('buildtype'),
+    'sdk_vscrt': host_system == 'windows' ? get_option('b_vscrt') : '',
+  },
 )
