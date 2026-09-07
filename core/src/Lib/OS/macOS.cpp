@@ -177,7 +177,7 @@ namespace draconis::core::system {
   }
 
   auto GetKernelVersion(CacheManager& cache) -> Result<String> {
-    return cache.getOrSet<String>("macos_kernel", CachePolicy::neverExpire(), []() -> Result<String> {
+    return cache.getOrSet<String>("macos_kernel", CachePolicy::tempDirectory(), []() -> Result<String> {
       Array<char, 256> kernelVersion {};
       usize            kernelVersionLen = kernelVersion.size();
 
@@ -779,9 +779,11 @@ namespace draconis::core::system {
     // RAII to ensure the CF object is released.
     const UniquePointer<const Unit, decltype(&CFRelease)> powerSourcesInfoDeleter(powerSourcesInfo, &CFRelease);
 
-    // The snapshot is an array of power sources.
-    const auto* const powerSourcesList = static_cast<CFArrayRef>(powerSourcesInfo);
-    const CFIndex     sourceCount      = CFArrayGetCount(powerSourcesList);
+    const CFArrayRef powerSourcesList = IOPSCopyPowerSourcesList(powerSourcesInfo);
+    if (!powerSourcesList)
+      ERR(ApiUnavailable, "IOPSCopyPowerSourcesList() returned nullptr");
+    const UniquePointer<const Unit, decltype(&CFRelease)> powerSourcesListDeleter(powerSourcesList, &CFRelease);
+    const CFIndex                                         sourceCount = CFArrayGetCount(powerSourcesList);
 
     for (CFIndex i = 0; i < sourceCount; ++i) {
       // Get the dictionary of properties for a single power source.

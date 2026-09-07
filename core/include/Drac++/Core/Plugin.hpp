@@ -28,159 +28,64 @@
 #include <type_traits>
 
 // Required for DRAC_PLUGIN macro which uses draconis::utils::logging::LogLevel and SetLogLevelPtr
+#include "../Utils/CacheManager.hpp"
 #include "../Utils/Logging.hpp" // IWYU pragma: keep
 #include "../Utils/Types.hpp"
 
-// Forward declaration to avoid including CacheManager.hpp
-namespace draconis::utils::cache {
-  class CacheManager;
-}
-
-/**
- * @class PluginCache
- * @brief Cache interface for plugins - provides efficient BEVE-based caching for any serializable type
- *
- * @details This class wraps a cache directory and provides template-based caching that stores
- * data in BEVE format (glaze's binary encoding) for maximum efficiency. Plugins can cache
- * any type that has glaze metadata defined.
- *
- * Cache entries include an expiry timestamp, and expired entries are automatically ignored.
- */
+// Plugins use the same typed, atomic, bounded cache implementation as core.
 class PluginCache {
-  using String = draconis::utils::types::String;
-  template <typename T>
-  using Option = draconis::utils::types::Option<T>;
-  using u32    = draconis::utils::types::u32;
-  using u64    = draconis::utils::types::u64;
-  template <typename K, typename V>
-  using UnorderedMap = draconis::utils::types::UnorderedMap<K, V>;
-  template <typename A, typename B>
-  using Pair                 = draconis::utils::types::Pair<A, B>;
-  static constexpr auto None = draconis::utils::types::None;
+  using CacheManager = draconis::utils::cache::CacheManager;
+  using String       = draconis::utils::types::String;
+  std::shared_ptr<CacheManager> m_manager;
+  std::shared_ptr<void>         m_module;
+  String                        m_prefix;
 
  public:
   template <typename T>
-  struct CacheEntry {
-    T           data;
-    Option<u64> expires; // UNIX timestamp, None = no expiry
-  };
+  using CacheEntry = CacheManager::CacheEntry<T>;
+  explicit PluginCache(const std::filesystem::path& directory)
+    : m_manager(std::make_shared<CacheManager>(directory)) {}
 
-  explicit PluginCache(const std::filesystem::path& cacheDir) : m_cacheDir(cacheDir) {
-    std::error_code errc;
-    std::filesystem::create_directories(m_cacheDir, errc);
+  // The shared service remains alive when a C consumer destroys its cache handle.
+  auto bind(std::shared_ptr<CacheManager> manager, String prefix) -> void {
+    manager->retainModule(m_module);
+    m_manager = std::move(manager);
+    m_prefix  = std::move(prefix);
   }
-
-  /**
-   * @brief Get a cached value
-   * @tparam T The type to retrieve (must have glaze metadata)
-   * @param key Cache key
-   * @return The cached value if found and not expired, None otherwise
-   */
   template <typename T>
-  [[nodiscard]] auto get(const String& key) const -> Option<T> {
-    // Check in-memory cache first
-    if (auto iter = m_cache.find(key); iter != m_cache.end()) {
-      const auto& [data, expiryTp] = iter->second;
-      if (std::chrono::system_clock::now() < expiryTp) {
-        CacheEntry<T> entry;
-        if (glz::read_beve(entry, data) == glz::error_code::none)
-          return entry.data;
-      }
-    }
-
-    // Check filesystem
-    const std::filesystem::path filePath = m_cacheDir / key;
-    if (!std::filesystem::exists(filePath))
-      return None;
-
-    std::ifstream ifs(filePath, std::ios::binary);
-    if (!ifs)
-      return None;
-
-    String        fileContents((std::istreambuf_iterator<char>(ifs)), {});
-    CacheEntry<T> entry;
-
-    if (glz::read_beve(entry, fileContents) != glz::error_code::none)
-      return None;
-
-    // Check expiry
-    if (entry.expires.has_value()) {
-      auto expiryTp = std::chrono::system_clock::time_point(std::chrono::seconds(*entry.expires));
-      if (std::chrono::system_clock::now() >= expiryTp)
-        return None;
-    }
-
-    // Store in memory cache for faster subsequent access
-    auto expiryTp = entry.expires.has_value()
-      ? std::chrono::system_clock::time_point(std::chrono::seconds(*entry.expires))
-      : std::chrono::system_clock::time_point::max();
-    m_cache[key]  = { fileContents, expiryTp };
-
-    return entry.data;
+  auto get(const String& key) const -> draconis::utils::types::Option<T> {
+    if (!CacheManager::isValidKey(key))
+      return {};
+    return m_manager->get<T>(m_prefix + key, draconis::utils::cache::CachePolicy::neverExpire());
   }
-
-  /**
-   * @brief Set a cached value
-   * @tparam T The type to store (must have glaze metadata)
-   * @param key Cache key
-   * @param value The value to cache
-   * @param ttlSeconds Time-to-live in seconds (0 = no expiry)
-   */
   template <typename T>
-  auto set(const String& key, const T& value, u32 ttlSeconds = 0) -> void {
-    using namespace std::chrono;
-
-    Option<u64>              expiryTs = None;
-    system_clock::time_point expiryTp = system_clock::time_point::max();
-
-    if (ttlSeconds > 0) {
-      expiryTp = system_clock::now() + seconds(ttlSeconds);
-      expiryTs = duration_cast<seconds>(expiryTp.time_since_epoch()).count();
-    }
-
-    CacheEntry<T> entry {
-      .data    = value,
-      .expires = expiryTs
-    };
-
-    String binaryBuffer;
-    glz::write_beve(entry, binaryBuffer);
-
-    // Store in memory
-    m_cache[key] = { binaryBuffer, expiryTp };
-
-    // Store to filesystem
-    const std::filesystem::path filePath = m_cacheDir / key;
-    std::error_code             errc;
-    std::filesystem::create_directories(filePath.parent_path(), errc);
-
-    if (std::ofstream ofs(filePath, std::ios::binary | std::ios::trunc); ofs.is_open())
-      ofs.write(binaryBuffer.data(), static_cast<std::streamsize>(binaryBuffer.size()));
+  auto set(const String& key, const T& value, draconis::utils::types::u32 ttlSeconds = 0) -> void {
+    if (!CacheManager::isValidKey(key))
+      return;
+    using namespace draconis::utils::cache;
+    const CachePolicy policy { .location = CacheLocation::Persistent,
+                               .ttl      = ttlSeconds ? draconis::utils::types::Option<std::chrono::seconds>(std::chrono::seconds(ttlSeconds)) : draconis::utils::types::None };
+    m_manager->set(m_prefix + key, value, policy);
   }
-
-  /**
-   * @brief Invalidate a cached entry
-   * @param key Cache key to invalidate
-   */
   auto invalidate(const String& key) -> void {
-    m_cache.erase(key);
-    std::error_code errc;
-    std::filesystem::remove(m_cacheDir / key, errc);
+    if (CacheManager::isValidKey(key))
+      m_manager->invalidate(m_prefix + key);
   }
-
- private:
-  std::filesystem::path                                                             m_cacheDir;
-  mutable UnorderedMap<String, Pair<String, std::chrono::system_clock::time_point>> m_cache;
+  auto retainModule(std::shared_ptr<void> module) -> void {
+    m_manager->retainModule(module);
+    m_module = std::move(module);
+  }
+  template <typename T, typename Fetcher>
+  auto getOrSet(const String& key, draconis::utils::types::u32 ttlSeconds, Fetcher&& fetcher) -> draconis::utils::types::Result<T> {
+    if (!CacheManager::isValidKey(key))
+      return fetcher();
+    const draconis::utils::cache::CachePolicy policy {
+      .location = draconis::utils::cache::CacheLocation::Persistent,
+      .ttl      = std::chrono::seconds(ttlSeconds),
+    };
+    return m_manager->getOrSet<T>(m_prefix + key, policy, std::forward<Fetcher>(fetcher));
+  }
 };
-
-// Glaze metadata for CacheEntry (in global glz namespace)
-namespace glz {
-  template <typename T>
-  struct meta<PluginCache::CacheEntry<T>> {
-    using Entry                 = PluginCache::CacheEntry<T>;
-    static constexpr auto value = object("data", &Entry::data, "expires", &Entry::expires);
-  };
-} // namespace glz
 
 namespace draconis::core::plugin {
   /**
@@ -527,6 +432,9 @@ namespace glz {
 #else
 // NOLINTBEGIN(bugprone-macro-parentheses) - false positive
   #define DRAC_PLUGIN(PluginClass)                                                                            \
+    extern "C" DRAC_PLUGIN_API auto DracPluginAbiVersion() -> unsigned int {                                  \
+      return 2;                                                                                               \
+    }                                                                                                         \
     extern "C" DRAC_PLUGIN_API auto CreatePlugin() -> draconis::core::plugin::IPlugin* {                      \
       return new PluginClass();                                                                               \
     }                                                                                                         \

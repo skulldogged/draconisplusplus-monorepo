@@ -170,7 +170,7 @@ if get_option('build_rust')
 endif
 
 if get_option('build_python')
-  subdir('bindings/python')
+  subdir('bindings/python/integration')
 endif
 
 if get_option('build_lua')

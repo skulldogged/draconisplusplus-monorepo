@@ -7,16 +7,28 @@ use std::{
 fn main() {
   let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
   let out_dir = env::var("OUT_DIR").unwrap();
-  let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_else(|_| "unknown".to_string());
 
   let monorepo_root = Path::new(&manifest_dir)
     .parent()
     .and_then(|p| p.parent())
     .expect("Failed to find monorepo root");
 
-  // Use a separate build directory for Rust bindings to avoid conflicts
-  // with the main monorepo build configuration
-  let build_dir = monorepo_root.join("build-rust");
+  // Cargo isolates OUT_DIR by target/profile/configuration. Never mutate a
+  // shared checkout build, including when several Cargo jobs run concurrently.
+  let build_dir = PathBuf::from(&out_dir).join("native");
+  if env::var("HOST").ok() != env::var("TARGET").ok()
+    && env::var_os("DRAC_NATIVE_BUILD_DIR").is_none()
+  {
+    panic!("Cross compilation requires a separately built target SDK; set DRAC_NATIVE_BUILD_DIR to its Meson build directory");
+  }
+  println!("cargo:rerun-if-env-changed=DRAC_NATIVE_BUILD_DIR");
+  println!("cargo:rerun-if-env-changed=DRAC_MESON_NATIVE_FILE");
+  for path in ["core", "c-api", "tools", "meson.build", "meson.options"] {
+    println!(
+      "cargo:rerun-if-changed={}",
+      monorepo_root.join(path).display()
+    );
+  }
 
   println!("cargo:rerun-if-env-changed=DRAC_PLUGINS");
   println!("cargo:rerun-if-env-changed=DRAC_PLUGIN_DIRS");
@@ -25,128 +37,78 @@ fn main() {
   println!("cargo:rerun-if-env-changed=DRAC_CACHING");
   println!("cargo:rerun-if-env-changed=DRAC_BUILD_TYPE");
 
-  run_meson_build(&monorepo_root, &build_dir);
+  let build_dir = if let Some(path) = env::var_os("DRAC_NATIVE_BUILD_DIR") {
+    PathBuf::from(path)
+  } else {
+    run_meson_build(&monorepo_root, &build_dir);
+    build_dir
+  };
 
   generate_bindings(&monorepo_root, &out_dir);
 
   link_libraries(&build_dir);
-  link_system_libs(&target_os);
 }
 
 fn run_meson_build(monorepo_root: &Path, build_dir: &Path) {
-  let is_configured = build_dir.join("build.ninja").exists();
-
-  let plugins = env::var("DRAC_PLUGINS").ok();
-  let plugin_dirs = env::var("DRAC_PLUGIN_DIRS").ok();
-  let static_plugins = env::var("DRAC_STATIC_PLUGINS").ok();
-  let packagecount = env::var("DRAC_PACKAGECOUNT").ok();
-  let caching = env::var("DRAC_CACHING").ok();
-  let build_type = env::var("DRAC_BUILD_TYPE").ok();
-
-  let needs_reconfigure = !is_configured
-    || plugins.is_some()
-    || plugin_dirs.is_some()
-    || static_plugins.is_some()
-    || packagecount.is_some()
-    || caching.is_some()
-    || build_type.is_some();
-
-  if !is_configured {
-    let mut args = vec![
-      "setup".to_string(),
-      build_dir.to_string_lossy().to_string(),
-      monorepo_root.to_string_lossy().to_string(),
-      "-Dbuild_cli=false".to_string(),
-      "-Dbuild_tests=false".to_string(),
-      "-Dbuild_examples=false".to_string(),
-      "-Dbuild_rust=false".to_string(),
-      "-Db_vscrt=md".to_string(),
-    ];
-
-    let bt = build_type.as_deref().unwrap_or("release");
-    args.push(format!("--buildtype={}", bt));
-
-    // If static plugins are specified, enable the plugin system
-    if let Some(val) = &static_plugins {
-      args.push("-Dplugins=enabled".to_string());
-      args.push(format!("-Dstatic_plugins={}", val));
-      args.push("-Dprecompiled_config=false".to_string());
-    } else {
-      args.push(format!(
-        "-Dplugins={}",
-        plugins.as_deref().unwrap_or("auto")
-      ));
-    }
-
-    if let Some(val) = &packagecount {
-      args.push(format!("-Dpackagecount={}", val));
-    }
-
-    if let Some(val) = &plugin_dirs {
-      args.push(format!("-Dplugin_dirs={}", val));
-    }
-
-    if let Some(val) = &caching {
-      args.push(format!("-Dcaching={}", val));
-    }
-
-    let status = Command::new("meson")
-      .args(&args)
-      .status()
-      .expect("Failed to run meson setup. Is Meson installed?");
-
-    if !status.success() {
-      panic!("meson setup failed");
-    }
-  } else if needs_reconfigure {
-    let mut args = vec![
-      "configure".to_string(),
-      build_dir.to_string_lossy().to_string(),
-    ];
-
-    if let Some(val) = &plugins {
-      args.push(format!("-Dplugins={}", val));
-    }
-
-    if let Some(val) = &static_plugins {
-      args.push(format!("-Dstatic_plugins={}", val));
-      args.push("-Dprecompiled_config=false".to_string());
-    }
-
-    if let Some(val) = &plugin_dirs {
-      args.push(format!("-Dplugin_dirs={}", val));
-    }
-
-    if let Some(val) = &packagecount {
-      args.push(format!("-Dpackagecount={}", val));
-    }
-
-    if let Some(val) = &caching {
-      args.push(format!("-Dcaching={}", val));
-    }
-
-    if let Some(val) = &build_type {
-      args.push(format!("--buildtype={}", val));
-    }
-
-    let status = Command::new("meson")
-      .args(&args)
-      .status()
-      .expect("Failed to run meson configure");
-
-    if !status.success() {
-      panic!("meson configure failed");
-    }
+  let configured = build_dir.join("build.ninja").exists();
+  let static_plugins = env::var("DRAC_STATIC_PLUGINS").unwrap_or_default();
+  let plugins = if static_plugins.is_empty() {
+    env::var("DRAC_PLUGINS").unwrap_or_else(|_| "auto".to_string())
+  } else {
+    "enabled".to_string()
+  };
+  let mut args = vec![
+    "setup".to_string(),
+    build_dir.display().to_string(),
+    monorepo_root.display().to_string(),
+    "-Dbuild_cli=false".to_string(),
+    "-Dbuild_tests=false".to_string(),
+    "-Dbuild_examples=false".to_string(),
+    "-Dbuild_rust=false".to_string(),
+    "-Db_vscrt=md".to_string(),
+    "-Dprecompiled_config=false".to_string(),
+    format!("-Dplugins={}", plugins),
+    format!("-Dstatic_plugins={}", static_plugins),
+    format!(
+      "-Dplugin_dirs={}",
+      env::var("DRAC_PLUGIN_DIRS").unwrap_or_default()
+    ),
+    format!(
+      "-Dpackagecount={}",
+      env::var("DRAC_PACKAGECOUNT").unwrap_or_else(|_| "auto".to_string())
+    ),
+    format!(
+      "-Dcaching={}",
+      env::var("DRAC_CACHING").unwrap_or_else(|_| "auto".to_string())
+    ),
+    format!(
+      "--buildtype={}",
+      env::var("DRAC_BUILD_TYPE").unwrap_or_else(|_| "release".to_string())
+    ),
+  ];
+  // Reapply defaults as well as explicit overrides when Cargo reruns us, so
+  // removing an environment override cannot leave a stale native configuration.
+  if configured {
+    args.push("--reconfigure".to_string());
+  } else if let Ok(path) = env::var("DRAC_MESON_NATIVE_FILE") {
+    args.extend(["--native-file".to_string(), path]);
   }
-
-  let status = Command::new("meson")
-    .args(["compile", "-C", build_dir.to_str().unwrap()])
-    .status()
-    .expect("Failed to run meson compile");
-
-  if !status.success() {
-    panic!("meson compile failed");
-  }
+  assert!(
+    Command::new("meson")
+      .args(args)
+      .status()
+      .expect("Run Meson setup")
+      .success(),
+    "meson setup failed"
+  );
+  assert!(
+    Command::new("meson")
+      .args(["compile", "-C", build_dir.to_str().unwrap()])
+      .status()
+      .expect("Run Meson compile")
+      .success(),
+    "meson compile failed"
+  );
 }
 
 fn generate_bindings(monorepo_root: &Path, out_dir: &str) {
@@ -173,44 +135,7 @@ fn link_libraries(build_dir: &Path) {
     "cargo:rustc-link-search=native={}",
     build_dir.join("c-api").display()
   );
-  println!(
-    "cargo:rustc-link-search=native={}",
-    build_dir.join("core/src/Lib").display()
-  );
-
-  let curl_dir = build_dir.join("subprojects/curl-8.12.1/lib");
-  let has_curl = curl_dir.exists();
-  if has_curl {
-    println!("cargo:rustc-link-search=native={}", curl_dir.display());
-  }
-
-  println!("cargo:rustc-link-lib=static=drac++");
-  println!("cargo:rustc-link-lib=static=draconis_c");
-
-  if has_curl {
-    println!("cargo:rustc-link-lib=static=curl");
-  }
-}
-
-fn link_system_libs(target_os: &str) {
-  match target_os {
-    "windows" => {
-      for lib in &[
-        "dwmapi", "setupapi", "dxgi", "dxguid", "ole32", "propsys", "iphlpapi", "ws2_32",
-        "advapi32", "user32", "shell32", "psapi", "bcrypt",
-      ] {
-        println!("cargo:rustc-link-lib=dylib={}", lib);
-      }
-    }
-    "macos" => {
-      println!("cargo:rustc-link-lib=framework=CoreGraphics");
-      println!("cargo:rustc-link-lib=framework=Foundation");
-      println!("cargo:rustc-link-lib=framework=IOKit");
-      println!("cargo:rustc-link-lib=framework=SystemConfiguration");
-    }
-    "linux" | "freebsd" | "netbsd" | "openbsd" => {
-      println!("cargo:rustc-link-lib=dylib=dl");
-    }
-    _ => {}
-  }
+  // Meson owns C++ runtime, curl and platform transitive dependencies. Link
+  // only its standalone C runtime instead of guessing private archive paths.
+  println!("cargo:rustc-link-lib=dylib=draconis_c");
 }

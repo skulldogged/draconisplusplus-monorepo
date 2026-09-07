@@ -32,6 +32,20 @@ using namespace draconis::core::plugin;
 #define TO_C_ERROR(err) static_cast<::DracErrorCode>(static_cast<u8>((err).code))
 
 namespace {
+  template <typename T, void (*Free)(T*)>
+  class OutputGuard {
+    T* m_value;
+
+   public:
+    explicit OutputGuard(T* value) : m_value(value) {}
+    ~OutputGuard() {
+      if (m_value)
+        Free(m_value);
+    }
+    auto release() -> void {
+      m_value = nullptr;
+    }
+  };
   auto DupString(const String& str) -> CStr* {
     CStr* result = new CStr[str.size() + 1];
     std::memcpy(result, str.c_str(), str.size() + 1);
@@ -50,6 +64,8 @@ namespace {
     static const auto STATIC_PLUGIN_COUNT = static_cast<size_t>(::draconis::core::plugin::DracInitStaticPlugins());
     return STATIC_PLUGIN_COUNT;
   }
+
+  auto FreePluginFieldValue(DracPluginFieldValue& value) -> void;
 
   auto ToCPluginFieldValue(const PluginFieldValue& value) -> DracPluginFieldValue {
     return std::visit(
@@ -83,14 +99,20 @@ namespace {
           };
         } else if constexpr (std::same_as<T, PluginFieldArray>) {
           const DracPluginFieldValueArray array {
-            .items = new DracPluginFieldValue[inner.size()],
+            .items = new DracPluginFieldValue[inner.size()] {},
             .count = inner.size(),
           };
 
           Span<DracPluginFieldValue> items(array.items, array.count);
           usize                      index = 0;
-          for (DracPluginFieldValue& item : items)
-            item = ToCPluginFieldValue(inner.at(index++));
+          try {
+            for (DracPluginFieldValue& item : items)
+              item = ToCPluginFieldValue(inner.at(index++));
+          } catch (...) {
+            for (auto& item : items) FreePluginFieldValue(item);
+            delete[] array.items;
+            throw;
+          }
 
           return {
             .type       = DRAC_PLUGIN_FIELD_ARRAY,
@@ -98,16 +120,25 @@ namespace {
           };
         } else {
           const DracPluginFieldValueObject object {
-            .items = new DracPluginField[inner.size()],
+            .items = new DracPluginField[inner.size()] {},
             .count = inner.size(),
           };
 
           const Span<DracPluginField> items(object.items, object.count);
           usize                       index = 0;
-          for (const auto& [key, fieldValue] : inner) {
-            DracPluginField& item = items.subspan(index++).front();
-            item.key              = DupString(key);
-            item.value            = ToCPluginFieldValue(fieldValue);
+          try {
+            for (const auto& [key, fieldValue] : inner) {
+              DracPluginField& item = items.subspan(index++).front();
+              item.key              = DupString(key);
+              item.value            = ToCPluginFieldValue(fieldValue);
+            }
+          } catch (...) {
+            for (auto& item : items) {
+              delete[] item.key;
+              FreePluginFieldValue(item.value);
+            }
+            delete[] object.items;
+            throw;
           }
 
           return {
@@ -157,23 +188,23 @@ namespace {
 } // namespace
 
 struct DracCacheManager {
-  CacheManager inner;
+  std::shared_ptr<CacheManager> inner = std::make_shared<CacheManager>();
 };
 
 extern "C" {
-  auto DracCreateCacheManager(void) -> DracCacheManager* {
+  auto DracCreateCacheManager(void) -> DracCacheManager* try {
     return new DracCacheManager();
-  }
+  } catch (...) { return {}; }
 
-  auto DracDestroyCacheManager(DracCacheManager* mgr) -> void {
+  auto DracDestroyCacheManager(DracCacheManager* mgr) -> void try {
     delete mgr;
-  }
+  } catch (...) { return; }
 
-  auto DracFreeString(PCStr str) -> void {
+  auto DracFreeString(PCStr str) -> void try {
     delete[] str;
-  }
+  } catch (...) { return; }
 
-  auto DracFreeOSInfo(DracOSInfo* info) -> void {
+  auto DracFreeOSInfo(DracOSInfo* info) -> void try {
     if (!info)
       return;
 
@@ -183,9 +214,9 @@ extern "C" {
     info->name    = nullptr;
     info->version = nullptr;
     info->id      = nullptr;
-  }
+  } catch (...) { return; }
 
-  auto DracFreeDiskInfo(DracDiskInfo* info) -> void {
+  auto DracFreeDiskInfo(DracDiskInfo* info) -> void try {
     if (!info)
       return;
 
@@ -197,9 +228,9 @@ extern "C" {
     info->mountPoint = nullptr;
     info->filesystem = nullptr;
     info->driveType  = nullptr;
-  }
+  } catch (...) { return; }
 
-  auto DracFreeDiskInfoList(DracDiskInfoList* list) -> void {
+  auto DracFreeDiskInfoList(DracDiskInfoList* list) -> void try {
     if (!list || !list->items)
       return;
 
@@ -210,18 +241,18 @@ extern "C" {
     delete[] list->items;
     list->items = nullptr;
     list->count = 0;
-  }
+  } catch (...) { return; }
 
-  auto DracFreeDisplayInfoList(DracDisplayInfoList* list) -> void {
+  auto DracFreeDisplayInfoList(DracDisplayInfoList* list) -> void try {
     if (!list || !list->items)
       return;
 
     delete[] list->items;
     list->items = nullptr;
     list->count = 0;
-  }
+  } catch (...) { return; }
 
-  auto DracFreeNetworkInterface(DracNetworkInterface* iface) -> void {
+  auto DracFreeNetworkInterface(DracNetworkInterface* iface) -> void try {
     if (!iface)
       return;
 
@@ -233,9 +264,9 @@ extern "C" {
     iface->ipv4Address = nullptr;
     iface->ipv6Address = nullptr;
     iface->macAddress  = nullptr;
-  }
+  } catch (...) { return; }
 
-  auto DracFreeNetworkInterfaceList(DracNetworkInterfaceList* list) -> void {
+  auto DracFreeNetworkInterfaceList(DracNetworkInterfaceList* list) -> void try {
     if (!list || !list->items)
       return;
 
@@ -246,22 +277,22 @@ extern "C" {
     delete[] list->items;
     list->items = nullptr;
     list->count = 0;
-  }
+  } catch (...) { return; }
 
-  auto DracGetUptime(void) -> uint64_t {
+  auto DracGetUptime(void) -> uint64_t try {
     Result<std::chrono::seconds> result = GetUptime();
 
     if (result.has_value())
       return static_cast<uint64_t>(result.value().count());
 
     return 0;
-  }
+  } catch (...) { return {}; }
 
-  auto DracGetMemInfo(DracCacheManager* mgr, DracResourceUsage* out_usage) -> DracErrorCode {
+  auto DracGetMemInfo(DracCacheManager* mgr, DracResourceUsage* out_usage) -> DracErrorCode try {
     if (!mgr || !out_usage)
       return DRAC_ERROR_INVALID_ARGUMENT;
 
-    Result<ResourceUsage> result = GetMemInfo(mgr->inner);
+    Result<ResourceUsage> result = GetMemInfo(*mgr->inner);
 
     if (result.has_value()) {
       const ResourceUsage& val = result.value();
@@ -271,13 +302,19 @@ extern "C" {
     }
 
     return TO_C_ERROR(result.error());
+  } catch (const std::bad_alloc&) {
+    return DRAC_ERROR_OUT_OF_MEMORY;
+  } catch (const draconis::utils::error::DracError& error) {
+    return TO_C_ERROR(error);
+  } catch (...) {
+    return DRAC_ERROR_INTERNAL_ERROR;
   }
 
-  auto DracGetCpuCores(DracCacheManager* mgr, DracCPUCores* out_cores) -> DracErrorCode {
+  auto DracGetCpuCores(DracCacheManager* mgr, DracCPUCores* out_cores) -> DracErrorCode try {
     if (!mgr || !out_cores)
       return DRAC_ERROR_INVALID_ARGUMENT;
 
-    Result<CPUCores> result = GetCPUCores(mgr->inner);
+    Result<CPUCores> result = GetCPUCores(*mgr->inner);
 
     if (result.has_value()) {
       const CPUCores& val = result.value();
@@ -287,32 +324,49 @@ extern "C" {
     }
 
     return TO_C_ERROR(result.error());
+  } catch (const std::bad_alloc&) {
+    return DRAC_ERROR_OUT_OF_MEMORY;
+  } catch (const draconis::utils::error::DracError& error) {
+    return TO_C_ERROR(error);
+  } catch (...) {
+    return DRAC_ERROR_INTERNAL_ERROR;
   }
 
-  auto DracGetOperatingSystem(DracCacheManager* mgr, DracOSInfo* out_info) -> DracErrorCode {
+  auto DracGetOperatingSystem(DracCacheManager* mgr, DracOSInfo* out_info) -> DracErrorCode try {
     if (!mgr || !out_info)
       return DRAC_ERROR_INVALID_ARGUMENT;
 
+    *out_info = {};
+    OutputGuard<DracOSInfo, DracFreeOSInfo> outputGuard(out_info);
+
     *out_info = { .name = nullptr, .version = nullptr, .id = nullptr };
 
-    Result<OSInfo> result = GetOperatingSystem(mgr->inner);
+    Result<OSInfo> result = GetOperatingSystem(*mgr->inner);
 
     if (result.has_value()) {
       const OSInfo& val = result.value();
       out_info->name    = DupString(val.name);
       out_info->version = DupString(val.version);
       out_info->id      = DupString(val.id);
+      outputGuard.release();
       return DRAC_SUCCESS;
     }
 
     return TO_C_ERROR(result.error());
+  } catch (const std::bad_alloc&) {
+    return DRAC_ERROR_OUT_OF_MEMORY;
+  } catch (const draconis::utils::error::DracError& error) {
+    return TO_C_ERROR(error);
+  } catch (...) {
+    return DRAC_ERROR_INTERNAL_ERROR;
   }
 
-  auto DracGetDesktopEnvironment(DracCacheManager* mgr, char** out_str) -> DracErrorCode {
+  auto DracGetDesktopEnvironment(DracCacheManager* mgr, char** out_str) -> DracErrorCode try {
     if (!mgr || !out_str)
       return DRAC_ERROR_INVALID_ARGUMENT;
+    *out_str = nullptr;
 
-    Result<String> result = GetDesktopEnvironment(mgr->inner);
+    Result<String> result = GetDesktopEnvironment(*mgr->inner);
 
     if (result.has_value()) {
       *out_str = DupString(result.value());
@@ -320,13 +374,20 @@ extern "C" {
     }
 
     return TO_C_ERROR(result.error());
+  } catch (const std::bad_alloc&) {
+    return DRAC_ERROR_OUT_OF_MEMORY;
+  } catch (const draconis::utils::error::DracError& error) {
+    return TO_C_ERROR(error);
+  } catch (...) {
+    return DRAC_ERROR_INTERNAL_ERROR;
   }
 
-  auto DracGetWindowManager(DracCacheManager* mgr, char** out_str) -> DracErrorCode {
+  auto DracGetWindowManager(DracCacheManager* mgr, char** out_str) -> DracErrorCode try {
     if (!mgr || !out_str)
       return DRAC_ERROR_INVALID_ARGUMENT;
+    *out_str = nullptr;
 
-    Result<String> result = GetWindowManager(mgr->inner);
+    Result<String> result = GetWindowManager(*mgr->inner);
 
     if (result.has_value()) {
       *out_str = DupString(result.value());
@@ -334,13 +395,20 @@ extern "C" {
     }
 
     return TO_C_ERROR(result.error());
+  } catch (const std::bad_alloc&) {
+    return DRAC_ERROR_OUT_OF_MEMORY;
+  } catch (const draconis::utils::error::DracError& error) {
+    return TO_C_ERROR(error);
+  } catch (...) {
+    return DRAC_ERROR_INTERNAL_ERROR;
   }
 
-  auto DracGetShell(DracCacheManager* mgr, char** out_str) -> DracErrorCode {
+  auto DracGetShell(DracCacheManager* mgr, char** out_str) -> DracErrorCode try {
     if (!mgr || !out_str)
       return DRAC_ERROR_INVALID_ARGUMENT;
+    *out_str = nullptr;
 
-    Result<String> result = GetShell(mgr->inner);
+    Result<String> result = GetShell(*mgr->inner);
 
     if (result.has_value()) {
       *out_str = DupString(result.value());
@@ -348,13 +416,20 @@ extern "C" {
     }
 
     return TO_C_ERROR(result.error());
+  } catch (const std::bad_alloc&) {
+    return DRAC_ERROR_OUT_OF_MEMORY;
+  } catch (const draconis::utils::error::DracError& error) {
+    return TO_C_ERROR(error);
+  } catch (...) {
+    return DRAC_ERROR_INTERNAL_ERROR;
   }
 
-  auto DracGetHost(DracCacheManager* mgr, char** out_str) -> DracErrorCode {
+  auto DracGetHost(DracCacheManager* mgr, char** out_str) -> DracErrorCode try {
     if (!mgr || !out_str)
       return DRAC_ERROR_INVALID_ARGUMENT;
+    *out_str = nullptr;
 
-    Result<String> result = GetHost(mgr->inner);
+    Result<String> result = GetHost(*mgr->inner);
 
     if (result.has_value()) {
       *out_str = DupString(result.value());
@@ -362,13 +437,20 @@ extern "C" {
     }
 
     return TO_C_ERROR(result.error());
+  } catch (const std::bad_alloc&) {
+    return DRAC_ERROR_OUT_OF_MEMORY;
+  } catch (const draconis::utils::error::DracError& error) {
+    return TO_C_ERROR(error);
+  } catch (...) {
+    return DRAC_ERROR_INTERNAL_ERROR;
   }
 
-  auto DracGetCPUModel(DracCacheManager* mgr, char** out_str) -> DracErrorCode {
+  auto DracGetCPUModel(DracCacheManager* mgr, char** out_str) -> DracErrorCode try {
     if (!mgr || !out_str)
       return DRAC_ERROR_INVALID_ARGUMENT;
+    *out_str = nullptr;
 
-    Result<String> result = GetCPUModel(mgr->inner);
+    Result<String> result = GetCPUModel(*mgr->inner);
 
     if (result.has_value()) {
       *out_str = DupString(result.value());
@@ -376,13 +458,20 @@ extern "C" {
     }
 
     return TO_C_ERROR(result.error());
+  } catch (const std::bad_alloc&) {
+    return DRAC_ERROR_OUT_OF_MEMORY;
+  } catch (const draconis::utils::error::DracError& error) {
+    return TO_C_ERROR(error);
+  } catch (...) {
+    return DRAC_ERROR_INTERNAL_ERROR;
   }
 
-  auto DracGetGPUModel(DracCacheManager* mgr, char** out_str) -> DracErrorCode {
+  auto DracGetGPUModel(DracCacheManager* mgr, char** out_str) -> DracErrorCode try {
     if (!mgr || !out_str)
       return DRAC_ERROR_INVALID_ARGUMENT;
+    *out_str = nullptr;
 
-    Result<String> result = GetGPUModel(mgr->inner);
+    Result<String> result = GetGPUModel(*mgr->inner);
 
     if (result.has_value()) {
       *out_str = DupString(result.value());
@@ -390,13 +479,20 @@ extern "C" {
     }
 
     return TO_C_ERROR(result.error());
+  } catch (const std::bad_alloc&) {
+    return DRAC_ERROR_OUT_OF_MEMORY;
+  } catch (const draconis::utils::error::DracError& error) {
+    return TO_C_ERROR(error);
+  } catch (...) {
+    return DRAC_ERROR_INTERNAL_ERROR;
   }
 
-  auto DracGetKernelVersion(DracCacheManager* mgr, char** out_str) -> DracErrorCode {
+  auto DracGetKernelVersion(DracCacheManager* mgr, char** out_str) -> DracErrorCode try {
     if (!mgr || !out_str)
       return DRAC_ERROR_INVALID_ARGUMENT;
+    *out_str = nullptr;
 
-    Result<String> result = GetKernelVersion(mgr->inner);
+    Result<String> result = GetKernelVersion(*mgr->inner);
 
     if (result.has_value()) {
       *out_str = DupString(result.value());
@@ -404,13 +500,19 @@ extern "C" {
     }
 
     return TO_C_ERROR(result.error());
+  } catch (const std::bad_alloc&) {
+    return DRAC_ERROR_OUT_OF_MEMORY;
+  } catch (const draconis::utils::error::DracError& error) {
+    return TO_C_ERROR(error);
+  } catch (...) {
+    return DRAC_ERROR_INTERNAL_ERROR;
   }
 
-  auto DracGetDiskUsage(DracCacheManager* mgr, DracResourceUsage* out_usage) -> DracErrorCode {
+  auto DracGetDiskUsage(DracCacheManager* mgr, DracResourceUsage* out_usage) -> DracErrorCode try {
     if (!mgr || !out_usage)
       return DRAC_ERROR_INVALID_ARGUMENT;
 
-    Result<ResourceUsage> result = GetDiskUsage(mgr->inner);
+    Result<ResourceUsage> result = GetDiskUsage(*mgr->inner);
 
     if (result.has_value()) {
       const ResourceUsage& val = result.value();
@@ -420,20 +522,29 @@ extern "C" {
     }
 
     return TO_C_ERROR(result.error());
+  } catch (const std::bad_alloc&) {
+    return DRAC_ERROR_OUT_OF_MEMORY;
+  } catch (const draconis::utils::error::DracError& error) {
+    return TO_C_ERROR(error);
+  } catch (...) {
+    return DRAC_ERROR_INTERNAL_ERROR;
   }
 
-  auto DracGetDisks(DracCacheManager* mgr, DracDiskInfoList* out_list) -> DracErrorCode {
+  auto DracGetDisks(DracCacheManager* mgr, DracDiskInfoList* out_list) -> DracErrorCode try {
     if (!mgr || !out_list)
       return DRAC_ERROR_INVALID_ARGUMENT;
 
+    *out_list = {};
+    OutputGuard<DracDiskInfoList, DracFreeDiskInfoList> outputGuard(out_list);
+
     *out_list = { .items = nullptr, .count = 0 };
 
-    Result<Vec<DiskInfo>> result = GetDisks(mgr->inner);
+    Result<Vec<DiskInfo>> result = GetDisks(*mgr->inner);
 
     if (result.has_value()) {
       Vec<DiskInfo>& disks = result.value();
       out_list->count      = disks.size();
-      out_list->items      = new DracDiskInfo[disks.size()];
+      out_list->items      = new DracDiskInfo[disks.size()] {};
 
       Span<DracDiskInfo> outItems(out_list->items, out_list->count);
       usize              idx = 0;
@@ -449,15 +560,25 @@ extern "C" {
         dst.isSystemDrive   = src.isSystemDrive;
       }
 
+      outputGuard.release();
       return DRAC_SUCCESS;
     }
 
     return TO_C_ERROR(result.error());
+  } catch (const std::bad_alloc&) {
+    return DRAC_ERROR_OUT_OF_MEMORY;
+  } catch (const draconis::utils::error::DracError& error) {
+    return TO_C_ERROR(error);
+  } catch (...) {
+    return DRAC_ERROR_INTERNAL_ERROR;
   }
 
-  auto DracGetSystemDisk(DracCacheManager* mgr, DracDiskInfo* out_info) -> DracErrorCode {
+  auto DracGetSystemDisk(DracCacheManager* mgr, DracDiskInfo* out_info) -> DracErrorCode try {
     if (!mgr || !out_info)
       return DRAC_ERROR_INVALID_ARGUMENT;
+
+    *out_info = {};
+    OutputGuard<DracDiskInfo, DracFreeDiskInfo> outputGuard(out_info);
 
     *out_info = {
       .name          = nullptr,
@@ -469,7 +590,7 @@ extern "C" {
       .isSystemDrive = false,
     };
 
-    Result<DiskInfo> result = GetSystemDisk(mgr->inner);
+    Result<DiskInfo> result = GetSystemDisk(*mgr->inner);
 
     if (result.has_value()) {
       const DiskInfo& disk    = result.value();
@@ -480,22 +601,32 @@ extern "C" {
       out_info->totalBytes    = disk.totalBytes;
       out_info->usedBytes     = disk.usedBytes;
       out_info->isSystemDrive = disk.isSystemDrive;
+      outputGuard.release();
       return DRAC_SUCCESS;
     }
 
     return TO_C_ERROR(result.error());
+  } catch (const std::bad_alloc&) {
+    return DRAC_ERROR_OUT_OF_MEMORY;
+  } catch (const draconis::utils::error::DracError& error) {
+    return TO_C_ERROR(error);
+  } catch (...) {
+    return DRAC_ERROR_INTERNAL_ERROR;
   }
 
-  auto DracGetOutputs(DracCacheManager* mgr, DracDisplayInfoList* out_list) -> DracErrorCode {
+  auto DracGetOutputs(DracCacheManager* mgr, DracDisplayInfoList* out_list) -> DracErrorCode try {
     if (!mgr || !out_list)
       return DRAC_ERROR_INVALID_ARGUMENT;
 
-    Result<Vec<DisplayInfo>> result = GetOutputs(mgr->inner);
+    *out_list = {};
+    OutputGuard<DracDisplayInfoList, DracFreeDisplayInfoList> outputGuard(out_list);
+
+    Result<Vec<DisplayInfo>> result = GetOutputs(*mgr->inner);
 
     if (result.has_value()) {
       Vec<DisplayInfo>& outputs = result.value();
       out_list->count           = outputs.size();
-      out_list->items           = new DracDisplayInfo[outputs.size()];
+      out_list->items           = new DracDisplayInfo[outputs.size()] {};
 
       Span<DracDisplayInfo> outItems(out_list->items, out_list->count);
       usize                 idx = 0;
@@ -507,17 +638,24 @@ extern "C" {
         dst.refreshRate        = src.refreshRate;
         dst.isPrimary          = src.isPrimary;
       }
+      outputGuard.release();
       return DRAC_SUCCESS;
     }
 
     return TO_C_ERROR(result.error());
+  } catch (const std::bad_alloc&) {
+    return DRAC_ERROR_OUT_OF_MEMORY;
+  } catch (const draconis::utils::error::DracError& error) {
+    return TO_C_ERROR(error);
+  } catch (...) {
+    return DRAC_ERROR_INTERNAL_ERROR;
   }
 
-  auto DracGetPrimaryOutput(DracCacheManager* mgr, DracDisplayInfo* out_info) -> DracErrorCode {
+  auto DracGetPrimaryOutput(DracCacheManager* mgr, DracDisplayInfo* out_info) -> DracErrorCode try {
     if (!mgr || !out_info)
       return DRAC_ERROR_INVALID_ARGUMENT;
 
-    Result<DisplayInfo> result = GetPrimaryOutput(mgr->inner);
+    Result<DisplayInfo> result = GetPrimaryOutput(*mgr->inner);
 
     if (result.has_value()) {
       const DisplayInfo& output = result.value();
@@ -530,18 +668,27 @@ extern "C" {
     }
 
     return TO_C_ERROR(result.error());
+  } catch (const std::bad_alloc&) {
+    return DRAC_ERROR_OUT_OF_MEMORY;
+  } catch (const draconis::utils::error::DracError& error) {
+    return TO_C_ERROR(error);
+  } catch (...) {
+    return DRAC_ERROR_INTERNAL_ERROR;
   }
 
-  auto DracGetNetworkInterfaces(DracCacheManager* mgr, DracNetworkInterfaceList* out_list) -> DracErrorCode {
+  auto DracGetNetworkInterfaces(DracCacheManager* mgr, DracNetworkInterfaceList* out_list) -> DracErrorCode try {
     if (!mgr || !out_list)
       return DRAC_ERROR_INVALID_ARGUMENT;
 
-    Result<Vec<NetworkInterface>> result = GetNetworkInterfaces(mgr->inner);
+    *out_list = {};
+    OutputGuard<DracNetworkInterfaceList, DracFreeNetworkInterfaceList> outputGuard(out_list);
+
+    Result<Vec<NetworkInterface>> result = GetNetworkInterfaces(*mgr->inner);
 
     if (result.has_value()) {
       Vec<NetworkInterface>& ifaces = result.value();
       out_list->count               = ifaces.size();
-      out_list->items               = new DracNetworkInterface[ifaces.size()];
+      out_list->items               = new DracNetworkInterface[ifaces.size()] {};
 
       Span<DracNetworkInterface> outItems(out_list->items, out_list->count);
       usize                      idx = 0;
@@ -554,17 +701,27 @@ extern "C" {
         dst.isUp                    = src.isUp;
         dst.isLoopback              = src.isLoopback;
       }
+      outputGuard.release();
       return DRAC_SUCCESS;
     }
 
     return TO_C_ERROR(result.error());
+  } catch (const std::bad_alloc&) {
+    return DRAC_ERROR_OUT_OF_MEMORY;
+  } catch (const draconis::utils::error::DracError& error) {
+    return TO_C_ERROR(error);
+  } catch (...) {
+    return DRAC_ERROR_INTERNAL_ERROR;
   }
 
-  auto DracGetPrimaryNetworkInterface(DracCacheManager* mgr, DracNetworkInterface* out_iface) -> DracErrorCode {
+  auto DracGetPrimaryNetworkInterface(DracCacheManager* mgr, DracNetworkInterface* out_iface) -> DracErrorCode try {
     if (!mgr || !out_iface)
       return DRAC_ERROR_INVALID_ARGUMENT;
 
-    Result<NetworkInterface> result = GetPrimaryNetworkInterface(mgr->inner);
+    *out_iface = {};
+    OutputGuard<DracNetworkInterface, DracFreeNetworkInterface> outputGuard(out_iface);
+
+    Result<NetworkInterface> result = GetPrimaryNetworkInterface(*mgr->inner);
 
     if (result.has_value()) {
       const NetworkInterface& iface = result.value();
@@ -574,17 +731,24 @@ extern "C" {
       out_iface->macAddress         = DupOptionalString(iface.macAddress);
       out_iface->isUp               = iface.isUp;
       out_iface->isLoopback         = iface.isLoopback;
+      outputGuard.release();
       return DRAC_SUCCESS;
     }
 
     return TO_C_ERROR(result.error());
+  } catch (const std::bad_alloc&) {
+    return DRAC_ERROR_OUT_OF_MEMORY;
+  } catch (const draconis::utils::error::DracError& error) {
+    return TO_C_ERROR(error);
+  } catch (...) {
+    return DRAC_ERROR_INTERNAL_ERROR;
   }
 
-  auto DracGetBatteryInfo(DracCacheManager* mgr, DracBattery* out_battery) -> DracErrorCode {
+  auto DracGetBatteryInfo(DracCacheManager* mgr, DracBattery* out_battery) -> DracErrorCode try {
     if (!mgr || !out_battery)
       return DRAC_ERROR_INVALID_ARGUMENT;
 
-    Result<Battery> result = GetBatteryInfo(mgr->inner);
+    Result<Battery> result = GetBatteryInfo(*mgr->inner);
 
     if (result.has_value()) {
       Battery& battery = result.value();
@@ -603,153 +767,107 @@ extern "C" {
     }
 
     return TO_C_ERROR(result.error());
+  } catch (const std::bad_alloc&) {
+    return DRAC_ERROR_OUT_OF_MEMORY;
+  } catch (const draconis::utils::error::DracError& error) {
+    return TO_C_ERROR(error);
+  } catch (...) {
+    return DRAC_ERROR_INTERNAL_ERROR;
   }
 
 #if DRAC_ENABLE_PLUGINS
   struct DracPlugin {
-    IInfoProviderPlugin* inner;
-    String               name;
-    bool                 ownsInstance;
+    PluginHandle<IInfoProviderPlugin> inner;
   };
 
-  auto DracInitStaticPlugins(void) -> size_t {
-    return InitStaticPluginsForCAPI();
+  auto DracInitStaticPlugins(void) -> size_t try { return InitStaticPluginsForCAPI(); } catch (...) {
+    return {};
   }
+  auto DracInitPluginManager(void) -> void try { (void)GetPluginManager().initialize(); } catch (...) {
+    return;
+  }
+  auto DracShutdownPluginManager(void) -> void try { GetPluginManager().shutdown(); } catch (...) {
+    return;
+  }
+  auto DracAddPluginSearchPath(const char* path) -> void try {
+    if (path)
+      GetPluginManager().addSearchPath(std::filesystem::path(path));
+  } catch (...) { return; }
 
-  auto DracInitPluginManager(void) -> void {
-  #if DRAC_PRECOMPILED_CONFIG
-  #else
-    auto& mgr = GetPluginManager();
-    if (!mgr.isInitialized()) {
-      PluginConfig config;
-      (void)mgr.initialize(config);
+  auto DracDiscoverPlugins(void) -> DracPluginInfoList try {
+    auto& manager = GetPluginManager();
+    (void)manager.initialize();
+    (void)manager.scanForPlugins();
+    const auto         names = manager.listDiscoveredPlugins();
+    DracPluginInfoList result { .items = new DracPluginInfo[names.size()] {}, .count = names.size() };
+    try {
+      for (size_t i = 0; i < names.size(); ++i) {
+        result.items[i].name = DupString(names[i]);
+        if (auto plugin = manager.getPlugin(names[i])) {
+          const auto  lock            = plugin->lock();
+          const auto& metadata        = (*plugin)->getMetadata();
+          result.items[i].version     = DupString(metadata.version);
+          result.items[i].author      = DupString(metadata.author);
+          result.items[i].description = DupString(metadata.description);
+        }
+      }
+    } catch (...) {
+      DracFreePluginInfoList(&result);
+      throw;
     }
-  #endif
-  }
+    return result;
+  } catch (...) { return {}; }
 
-  auto DracShutdownPluginManager(void) -> void {
-  #if DRAC_PRECOMPILED_CONFIG
-      // Static plugin mode doesn't use the dynamic PluginManager
-  #else
-    GetPluginManager().shutdown();
-  #endif
-  }
-
-  auto DracAddPluginSearchPath(const char* path) -> void {
-    if (!path)
-      return;
-  #if DRAC_PRECOMPILED_CONFIG
-      // Static plugins don't use search paths
-  #else
-    GetPluginManager().addSearchPath(std::filesystem::path(path));
-  #endif
-  }
-
-  auto DracDiscoverPlugins(void) -> DracPluginInfoList {
-    return { .items = nullptr, .count = 0 };
-  }
-
-  auto DracLoadPlugin(const char* pluginId) -> DracPlugin* {
+  auto DracLoadPlugin(const char* pluginId) -> DracPlugin* try {
     if (!pluginId)
       return nullptr;
-
-    (void)InitStaticPluginsForCAPI();
-
-    String name(pluginId);
-
-    // First try static plugins
-    if (IsStaticPlugin(name)) {
-      IPlugin* basePlugin = CreateStaticPlugin(name);
-      if (!basePlugin)
-        return nullptr;
-
-      auto* infoPlugin = dynamic_cast<IInfoProviderPlugin*>(basePlugin);
-      if (!infoPlugin) {
-        DestroyStaticPlugin(name, basePlugin);
-        return nullptr;
-      }
-
-      return new DracPlugin { .inner = infoPlugin, .name = std::move(name), .ownsInstance = true };
-    }
-
-  #if DRAC_PRECOMPILED_CONFIG
-    return nullptr;
-  #else
-    auto& mgr = GetPluginManager();
-
-    CacheManager cache;
-    auto         result = mgr.loadPlugin(name, cache);
-
-    if (!result.has_value())
+    auto& manager = GetPluginManager();
+    (void)manager.initialize();
+    auto result = manager.createInfoProvider(pluginId);
+    if (!result)
       return nullptr;
+    return new DracPlugin { std::move(*result) };
+  } catch (...) { return {}; }
 
-    auto opt = mgr.getInfoProviderByName(name);
-    if (!opt.has_value())
+  auto DracLoadPluginFromPath(const char* path) -> DracPlugin* try {
+    if (!path || !*path)
       return nullptr;
+    const std::filesystem::path exactPath(path);
+    auto                        result = GetPluginManager().createInfoProvider(exactPath.stem().string(), exactPath);
+    if (!result)
+      return nullptr;
+    return new DracPlugin { std::move(*result) };
+  } catch (...) { return {}; }
 
-    return new DracPlugin { *opt, std::move(name), false };
-  #endif
+  auto DracUnloadPlugin(DracPlugin* plugin) -> void try { delete plugin; } catch (...) {
+    return;
   }
 
-  auto DracLoadPluginFromPath(const char* path) -> DracPlugin* {
-    if (!path)
-      return nullptr;
-
-    const std::filesystem::path pluginPath(path);
-    auto                        parentDir = pluginPath.parent_path();
-    auto                        stem      = pluginPath.stem().string();
-
-    auto& mgr = GetPluginManager();
-    mgr.addSearchPath(parentDir);
-
-    // Discover plugins in the new search path
-    if (auto scanResult = mgr.scanForPlugins(); !scanResult)
-      return nullptr;
-
-    CacheManager cache;
-    auto         result = mgr.loadPlugin(stem, cache);
-
-    if (!result.has_value())
-      return nullptr;
-
-    auto opt = mgr.getInfoProviderByName(stem);
-    if (!opt.has_value())
-      return nullptr;
-
-    return new DracPlugin { .inner = *opt, .name = std::move(stem), .ownsInstance = false };
-  }
-
-  auto DracUnloadPlugin(DracPlugin* plugin) -> void {
-    if (!plugin)
-      return;
-
-    if (plugin->ownsInstance && plugin->inner) {
-      auto* basePlugin = dynamic_cast<IPlugin*>(plugin->inner);
-      if (basePlugin) {
-        DestroyStaticPlugin(plugin->name, basePlugin);
-      }
-    }
-    delete plugin;
-  }
-
-  auto DracPluginInitialize(DracPlugin* plugin, DracCacheManager* cache) -> DracErrorCode {
+  auto DracPluginInitialize(DracPlugin* plugin, DracCacheManager* cache) -> DracErrorCode try {
     if (!plugin || !plugin->inner || !cache)
       return DRAC_ERROR_INVALID_ARGUMENT;
 
-    const PluginContext ctx;
-    PluginCache         pluginCache(std::filesystem::temp_directory_path() / "draconis_plugins");
-    Result<Unit>        result = plugin->inner->initialize(ctx, pluginCache);
+    const auto operationLock = plugin->inner.lock();
+    plugin->inner.cache().bind(cache->inner, "plugin_" + plugin->inner->getProviderId() + "_");
+    Result<Unit> result = plugin->inner.initialize();
 
     if (result.has_value())
       return DRAC_SUCCESS;
 
     return TO_C_ERROR(result.error());
+  } catch (const std::bad_alloc&) {
+    return DRAC_ERROR_OUT_OF_MEMORY;
+  } catch (const draconis::utils::error::DracError& error) {
+    return TO_C_ERROR(error);
+  } catch (...) {
+    return DRAC_ERROR_INTERNAL_ERROR;
   }
 
-  auto DracPluginSetConfig(DracPlugin* plugin, const char* tomlConfig) -> DracErrorCode {
+  auto DracPluginSetConfig(DracPlugin* plugin, const char* tomlConfig) -> DracErrorCode try {
     if (!plugin || !plugin->inner)
       return DRAC_ERROR_INVALID_ARGUMENT;
 
+    const auto operationLock = plugin->inner.lock();
     if (!tomlConfig)
       return DRAC_SUCCESS;
 
@@ -759,68 +877,87 @@ extern "C" {
       return DRAC_SUCCESS;
 
     return TO_C_ERROR(result.error());
+  } catch (const std::bad_alloc&) {
+    return DRAC_ERROR_OUT_OF_MEMORY;
+  } catch (const draconis::utils::error::DracError& error) {
+    return TO_C_ERROR(error);
+  } catch (...) {
+    return DRAC_ERROR_INTERNAL_ERROR;
   }
 
-  auto DracPluginIsEnabled(DracPlugin* plugin) -> bool {
+  auto DracPluginIsEnabled(DracPlugin* plugin) -> bool try {
     if (!plugin || !plugin->inner)
       return false;
 
+    const auto operationLock = plugin->inner.lock();
     return plugin->inner->isEnabled();
-  }
+  } catch (...) { return {}; }
 
-  auto DracPluginIsReady(DracPlugin* plugin) -> bool {
+  auto DracPluginIsReady(DracPlugin* plugin) -> bool try {
     if (!plugin || !plugin->inner)
       return false;
 
+    const auto operationLock = plugin->inner.lock();
     return plugin->inner->isReady();
-  }
+  } catch (...) { return {}; }
 
-  auto DracPluginCollectData(DracPlugin* plugin, DracCacheManager* cache) -> DracErrorCode {
+  auto DracPluginCollectData(DracPlugin* plugin, DracCacheManager* cache) -> DracErrorCode try {
     if (!plugin || !plugin->inner || !cache)
       return DRAC_ERROR_INVALID_ARGUMENT;
 
-    PluginCache  pluginCache(std::filesystem::temp_directory_path() / "draconis_plugins");
-    Result<Unit> result = plugin->inner->collectData(pluginCache);
+    const auto operationLock = plugin->inner.lock();
+    plugin->inner.cache().bind(cache->inner, "plugin_" + plugin->inner->getProviderId() + "_");
+    Result<Unit> result = plugin->inner->collectData(plugin->inner.cache());
 
     if (result.has_value())
       return DRAC_SUCCESS;
 
     return TO_C_ERROR(result.error());
+  } catch (const std::bad_alloc&) {
+    return DRAC_ERROR_OUT_OF_MEMORY;
+  } catch (const draconis::utils::error::DracError& error) {
+    return TO_C_ERROR(error);
+  } catch (...) {
+    return DRAC_ERROR_INTERNAL_ERROR;
   }
 
-  auto DracPluginGetFields(DracPlugin* plugin) -> DracPluginFieldList {
+  auto DracPluginGetFields(DracPlugin* plugin) -> DracPluginFieldList try {
     DracPluginFieldList result = { .items = nullptr, .count = 0 };
 
     if (!plugin || !plugin->inner)
       return result;
 
-    const PluginFields fields = plugin->inner->getFields();
-    result.count              = fields.size();
-    result.items              = new DracPluginField[fields.size()];
+    const auto         operationLock = plugin->inner.lock();
+    const PluginFields fields        = plugin->inner->getFields();
+    result.count                     = fields.size();
+    result.items                     = new DracPluginField[fields.size()] {};
 
-    const Span<DracPluginField> items(result.items, result.count);
-    size_t                      idx = 0;
+    OutputGuard<DracPluginFieldList, DracFreePluginFieldList> outputGuard(&result);
+    const Span<DracPluginField>                               items(result.items, result.count);
+    size_t                                                    idx = 0;
     for (const auto& [key, value] : fields) {
       DracPluginField& item = items.subspan(idx++).front();
       item.key              = DupString(key);
       item.value            = ToCPluginFieldValue(value);
     }
 
+    outputGuard.release();
     return result;
-  }
+  } catch (...) { return {}; }
 
-  auto DracPluginGetLastError(DracPlugin* plugin) -> char* {
+  auto DracPluginGetLastError(DracPlugin* plugin) -> char* try {
     if (!plugin || !plugin->inner)
       return nullptr;
 
-    Option<String> err = plugin->inner->getLastError();
+    const auto     operationLock = plugin->inner.lock();
+    Option<String> err           = plugin->inner->getLastError();
     if (!err.has_value())
       return nullptr;
 
     return DupString(*err);
-  }
+  } catch (...) { return {}; }
 
-  auto DracFreePluginFieldList(DracPluginFieldList* list) -> void {
+  auto DracFreePluginFieldList(DracPluginFieldList* list) -> void try {
     if (!list || !list->items)
       return;
 
@@ -832,9 +969,9 @@ extern "C" {
     delete[] list->items;
     list->items = nullptr;
     list->count = 0;
-  }
+  } catch (...) { return; }
 
-  auto DracFreePluginInfoList(DracPluginInfoList* list) -> void {
+  auto DracFreePluginInfoList(DracPluginInfoList* list) -> void try {
     if (!list || !list->items)
       return;
 
@@ -848,74 +985,96 @@ extern "C" {
     delete[] list->items;
     list->items = nullptr;
     list->count = 0;
-  }
+  } catch (...) { return; }
 #else
   // Stub implementations when plugins are disabled
   struct DracPlugin {
     int dummy;
   };
 
-  auto DracInitStaticPlugins(void) -> size_t {
+  auto DracInitStaticPlugins(void) -> size_t try {
     return 0;
-  }
-  auto DracInitPluginManager(void) -> void {}
-  auto DracShutdownPluginManager(void) -> void {}
-  auto DracAddPluginSearchPath(const char* /*unused*/) -> void {}
+  } catch (...) { return {}; }
+  auto DracInitPluginManager(void) -> void try {
+  } catch (...) { return; }
+  auto DracShutdownPluginManager(void) -> void try {
+  } catch (...) { return; }
+  auto DracAddPluginSearchPath(const char* /*unused*/) -> void try {
+  } catch (...) { return; }
 
-  auto DracDiscoverPlugins(void) -> DracPluginInfoList {
+  auto DracDiscoverPlugins(void) -> DracPluginInfoList try {
     return { nullptr, 0 };
-  }
+  } catch (...) { return {}; }
 
-  auto DracFreePluginInfoList(DracPluginInfoList* list) -> void {
+  auto DracFreePluginInfoList(DracPluginInfoList* list) -> void try {
     if (list) {
       list->items = nullptr;
       list->count = 0;
     }
-  }
+  } catch (...) { return; }
 
-  auto DracLoadPlugin(const char* /*unused*/) -> DracPlugin* {
+  auto DracLoadPlugin(const char* /*unused*/) -> DracPlugin* try {
     return nullptr;
-  }
+  } catch (...) { return {}; }
 
-  auto DracLoadPluginFromPath(const char* /*unused*/) -> DracPlugin* {
+  auto DracLoadPluginFromPath(const char* /*unused*/) -> DracPlugin* try {
     return nullptr;
-  }
+  } catch (...) { return {}; }
 
-  auto DracUnloadPlugin(DracPlugin* /*unused*/) -> void {}
+  auto DracUnloadPlugin(DracPlugin* /*unused*/) -> void try {
+  } catch (...) { return; }
 
-  auto DracPluginInitialize(DracPlugin* /*unused*/, DracCacheManager* /*unused*/) -> DracErrorCode {
+  auto DracPluginInitialize(DracPlugin* /*unused*/, DracCacheManager* /*unused*/) -> DracErrorCode try {
     return DRAC_ERROR_NOT_SUPPORTED;
+  } catch (const std::bad_alloc&) {
+    return DRAC_ERROR_OUT_OF_MEMORY;
+  } catch (const draconis::utils::error::DracError& error) {
+    return TO_C_ERROR(error);
+  } catch (...) {
+    return DRAC_ERROR_INTERNAL_ERROR;
   }
 
-  auto DracPluginSetConfig(DracPlugin* /*unused*/, const char* /*unused*/) -> DracErrorCode {
+  auto DracPluginSetConfig(DracPlugin* /*unused*/, const char* /*unused*/) -> DracErrorCode try {
     return DRAC_ERROR_NOT_SUPPORTED;
+  } catch (const std::bad_alloc&) {
+    return DRAC_ERROR_OUT_OF_MEMORY;
+  } catch (const draconis::utils::error::DracError& error) {
+    return TO_C_ERROR(error);
+  } catch (...) {
+    return DRAC_ERROR_INTERNAL_ERROR;
   }
 
-  auto DracPluginIsEnabled(DracPlugin* /*unused*/) -> bool {
+  auto DracPluginIsEnabled(DracPlugin* /*unused*/) -> bool try {
     return false;
-  }
+  } catch (...) { return {}; }
 
-  auto DracPluginIsReady(DracPlugin* /*unused*/) -> bool {
+  auto DracPluginIsReady(DracPlugin* /*unused*/) -> bool try {
     return false;
-  }
+  } catch (...) { return {}; }
 
-  auto DracPluginCollectData(DracPlugin* /*unused*/, DracCacheManager* /*unused*/) -> DracErrorCode {
+  auto DracPluginCollectData(DracPlugin* /*unused*/, DracCacheManager* /*unused*/) -> DracErrorCode try {
     return DRAC_ERROR_NOT_SUPPORTED;
+  } catch (const std::bad_alloc&) {
+    return DRAC_ERROR_OUT_OF_MEMORY;
+  } catch (const draconis::utils::error::DracError& error) {
+    return TO_C_ERROR(error);
+  } catch (...) {
+    return DRAC_ERROR_INTERNAL_ERROR;
   }
 
-  auto DracPluginGetFields(DracPlugin* /*unused*/) -> DracPluginFieldList {
+  auto DracPluginGetFields(DracPlugin* /*unused*/) -> DracPluginFieldList try {
     return { nullptr, 0 };
-  }
+  } catch (...) { return {}; }
 
-  auto DracPluginGetLastError(DracPlugin* /*unused*/) -> char* {
+  auto DracPluginGetLastError(DracPlugin* /*unused*/) -> char* try {
     return nullptr;
-  }
+  } catch (...) { return {}; }
 
-  auto DracFreePluginFieldList(DracPluginFieldList* list) -> void {
+  auto DracFreePluginFieldList(DracPluginFieldList* list) -> void try {
     if (list) {
       list->items = nullptr;
       list->count = 0;
     }
-  }
+  } catch (...) { return; }
 #endif
 }

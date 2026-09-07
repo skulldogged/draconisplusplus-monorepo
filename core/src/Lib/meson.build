@@ -6,7 +6,7 @@ fs = import('fs')
 
 # Structured source organization
 lib_sources = {
-  'base' : files('Localization.cpp'),
+  'base' : files('Localization.cpp', 'OS/Unavailable.cpp'),
   'packages' : files('Services/Packages.cpp'),
   'plugins' : files('Core/PluginManager.cpp'),
 }
@@ -24,6 +24,7 @@ platform_sources = {
   'haiku' : files('OS/Haiku.cpp'),
   'linux' : files('OS/Linux.cpp'),
   'netbsd' : files('OS/BSD.cpp'),
+  'openbsd' : files(),
   'serenity' : files('OS/Serenity.cpp'),
   'windows' : files('OS/Windows.cpp'),
 }
@@ -31,12 +32,15 @@ platform_sources = {
 # Build final source list
 lib_all_sources = lib_sources['base']
 
-if get_option('packagecount').enabled()
+if feature_states['packagecount']
   lib_all_sources += lib_sources['packages']
 endif
 
 # Add platform sources
-lib_all_sources += platform_sources.get(host_system, files())
+if host_system not in platform_sources
+  error('Unsupported platform: ' + host_system)
+endif
+lib_all_sources += platform_sources[host_system]
 
 # Plugin configuration
 static_plugin_cpp_args = []
@@ -135,7 +139,7 @@ libdrac = static_library(
   lib_all_sources,
   dependencies : lib_deps,
   cpp_args : static_plugin_cpp_args,
-  install : false,
+  install : true,
 )
 
 # Standard dependency (for most targets)

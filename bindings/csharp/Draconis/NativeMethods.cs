@@ -234,7 +234,7 @@ internal static class NativeMethods
     }
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr DracCreateCacheManager();
+    internal static extern CacheManagerHandle DracCreateCacheManager();
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern void DracDestroyCacheManager(IntPtr mgr);
@@ -264,58 +264,58 @@ internal static class NativeMethods
     internal static extern ulong DracGetUptime();
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern DracErrorCode DracGetMemInfo(IntPtr mgr, out DracResourceUsage usage);
+    internal static extern DracErrorCode DracGetMemInfo(CacheManagerHandle mgr, out DracResourceUsage usage);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern DracErrorCode DracGetCpuCores(IntPtr mgr, out DracCPUCores cores);
+    internal static extern DracErrorCode DracGetCpuCores(CacheManagerHandle mgr, out DracCPUCores cores);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern DracErrorCode DracGetOperatingSystem(IntPtr mgr, out DracOSInfo info);
+    internal static extern DracErrorCode DracGetOperatingSystem(CacheManagerHandle mgr, out DracOSInfo info);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern DracErrorCode DracGetDesktopEnvironment(IntPtr mgr, out IntPtr str);
+    internal static extern DracErrorCode DracGetDesktopEnvironment(CacheManagerHandle mgr, out IntPtr str);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern DracErrorCode DracGetWindowManager(IntPtr mgr, out IntPtr str);
+    internal static extern DracErrorCode DracGetWindowManager(CacheManagerHandle mgr, out IntPtr str);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern DracErrorCode DracGetShell(IntPtr mgr, out IntPtr str);
+    internal static extern DracErrorCode DracGetShell(CacheManagerHandle mgr, out IntPtr str);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern DracErrorCode DracGetHost(IntPtr mgr, out IntPtr str);
+    internal static extern DracErrorCode DracGetHost(CacheManagerHandle mgr, out IntPtr str);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern DracErrorCode DracGetCPUModel(IntPtr mgr, out IntPtr str);
+    internal static extern DracErrorCode DracGetCPUModel(CacheManagerHandle mgr, out IntPtr str);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern DracErrorCode DracGetGPUModel(IntPtr mgr, out IntPtr str);
+    internal static extern DracErrorCode DracGetGPUModel(CacheManagerHandle mgr, out IntPtr str);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern DracErrorCode DracGetKernelVersion(IntPtr mgr, out IntPtr str);
+    internal static extern DracErrorCode DracGetKernelVersion(CacheManagerHandle mgr, out IntPtr str);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern DracErrorCode DracGetDiskUsage(IntPtr mgr, out DracResourceUsage usage);
+    internal static extern DracErrorCode DracGetDiskUsage(CacheManagerHandle mgr, out DracResourceUsage usage);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern DracErrorCode DracGetDisks(IntPtr mgr, out DracDiskInfoList list);
+    internal static extern DracErrorCode DracGetDisks(CacheManagerHandle mgr, out DracDiskInfoList list);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern DracErrorCode DracGetSystemDisk(IntPtr mgr, out DracDiskInfo info);
+    internal static extern DracErrorCode DracGetSystemDisk(CacheManagerHandle mgr, out DracDiskInfo info);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern DracErrorCode DracGetOutputs(IntPtr mgr, out DracDisplayInfoList list);
+    internal static extern DracErrorCode DracGetOutputs(CacheManagerHandle mgr, out DracDisplayInfoList list);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern DracErrorCode DracGetPrimaryOutput(IntPtr mgr, out DracDisplayInfo info);
+    internal static extern DracErrorCode DracGetPrimaryOutput(CacheManagerHandle mgr, out DracDisplayInfo info);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern DracErrorCode DracGetNetworkInterfaces(IntPtr mgr, out DracNetworkInterfaceList list);
+    internal static extern DracErrorCode DracGetNetworkInterfaces(CacheManagerHandle mgr, out DracNetworkInterfaceList list);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern DracErrorCode DracGetPrimaryNetworkInterface(IntPtr mgr, out DracNetworkInterface iface);
+    internal static extern DracErrorCode DracGetPrimaryNetworkInterface(CacheManagerHandle mgr, out DracNetworkInterface iface);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern DracErrorCode DracGetBatteryInfo(IntPtr mgr, out DracBattery battery);
+    internal static extern DracErrorCode DracGetBatteryInfo(CacheManagerHandle mgr, out DracBattery battery);
 
     // Plugin system
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
@@ -334,33 +334,33 @@ internal static class NativeMethods
     internal static extern DracPluginInfoList DracDiscoverPlugins();
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr DracLoadPlugin([MarshalAs(UnmanagedType.LPStr)] string pluginName);
+    internal static extern PluginHandle DracLoadPlugin([MarshalAs(UnmanagedType.LPStr)] string pluginName);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr DracLoadPluginFromPath([MarshalAs(UnmanagedType.LPStr)] string path);
+    internal static extern PluginHandle DracLoadPluginFromPath([MarshalAs(UnmanagedType.LPStr)] string path);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern void DracUnloadPlugin(IntPtr plugin);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern DracErrorCode DracPluginInitialize(IntPtr plugin, IntPtr cache);
+    internal static extern DracErrorCode DracPluginInitialize(PluginHandle plugin, CacheManagerHandle cache);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     [return: MarshalAs(UnmanagedType.I1)]
-    internal static extern bool DracPluginIsEnabled(IntPtr plugin);
+    internal static extern bool DracPluginIsEnabled(PluginHandle plugin);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     [return: MarshalAs(UnmanagedType.I1)]
-    internal static extern bool DracPluginIsReady(IntPtr plugin);
+    internal static extern bool DracPluginIsReady(PluginHandle plugin);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern DracErrorCode DracPluginCollectData(IntPtr plugin, IntPtr cache);
+    internal static extern DracErrorCode DracPluginCollectData(PluginHandle plugin, CacheManagerHandle cache);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern DracPluginFieldList DracPluginGetFields(IntPtr plugin);
+    internal static extern DracPluginFieldList DracPluginGetFields(PluginHandle plugin);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr DracPluginGetLastError(IntPtr plugin);
+    internal static extern IntPtr DracPluginGetLastError(PluginHandle plugin);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern void DracFreePluginInfoList(ref DracPluginInfoList list);

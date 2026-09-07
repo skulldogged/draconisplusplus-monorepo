@@ -12,7 +12,9 @@
     #include <pugixml.hpp> // pugi::{xml_document, xml_node, xml_parse_result}
   #endif
 
-  #include <filesystem>   // std::filesystem
+  #include <filesystem> // std::filesystem
+  #include <fstream>
+  #include <glaze/glaze.hpp>
   #include <matchit.hpp>  // matchit::{match, is, or_, _}
   #include <system_error> // std::{errc, error_code}
 
@@ -249,20 +251,39 @@ namespace draconis::services::packages {
   }
   #endif // __linux__ || __APPLE__
 
-  auto CountCargo(CacheManager& cache) -> Result<u64> {
+  auto CountCargo(CacheManager& /*cache*/) -> Result<u64> {
     using draconis::utils::env::GetEnv;
-
-    fs::path cargoPath {};
-
-    if (const Result<String> cargoHome = GetEnv("CARGO_HOME"))
-      cargoPath = fs::path(*cargoHome) / "bin";
-    else if (const Result<String> homeDir = GetEnv("HOME"))
-      cargoPath = fs::path(*homeDir) / ".cargo" / "bin";
-
-    if (cargoPath.empty() || !fs::exists(cargoPath))
-      ERR(ConfigurationError, "Could not find cargo directory (CARGO_HOME or ~/.cargo/bin not configured)");
-
-    return GetCountFromDirectory(cache, "cargo", cargoPath);
+    fs::path directory;
+    if (auto cargoHome = GetEnv("CARGO_HOME"))
+      directory = *cargoHome;
+    else if (auto home = GetEnv("HOME"))
+      directory = fs::path(*home) / ".cargo";
+  #ifdef _WIN32
+    else if (auto profile = GetEnv("USERPROFILE"))
+      directory = fs::path(*profile) / ".cargo";
+  #endif
+    if (directory.empty())
+      ERR(ConfigurationError, "Cargo home is not configured");
+    const auto    path = directory / ".crates2.json";
+    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    if (!input)
+      ERR(NotFound, "Cargo install inventory .crates2.json is absent");
+    const auto size = input.tellg();
+    if (size < 0 || size > 16 * 1024 * 1024)
+      ERR(ResourceExhausted, "Cargo inventory is too large");
+    String contents(static_cast<usize>(size), '\0');
+    input.seekg(0);
+    if (!contents.empty() && !input.read(contents.data(), contents.size()))
+      ERR(IoError, "Cannot read Cargo inventory");
+    glz::generic inventory;
+    if (glz::read_json(inventory, contents))
+      ERR(ParseError, "Invalid Cargo install inventory");
+    if (!inventory.is_object())
+      ERR(ParseError, "Cargo inventory is not an object");
+    const auto installs = inventory.get_object().find("installs");
+    if (installs == inventory.get_object().end() || !installs->second.is_object())
+      ERR(ParseError, "Cargo inventory is missing its installs map");
+    return static_cast<u64>(installs->second.size());
   }
 
   auto GetTotalCount(CacheManager& cache, const Manager enabledPackageManagers) -> Result<u64> {

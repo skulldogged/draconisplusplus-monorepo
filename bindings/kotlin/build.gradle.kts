@@ -68,3 +68,10 @@ val runExample by tasks.registering(JavaExec::class) {
          jvmArgs("-Djava.library.path=$jniLibDir")
     }
 }
+
+tasks.test {
+    doFirst {
+        val cfg = loadDracConfig()
+        jvmArgs("-Djava.library.path=${cfg.getProperty("JNI_LIB_DIR")}")
+    }
+}

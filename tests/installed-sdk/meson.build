@@ -1,0 +1,5 @@
+project('installed-sdk-consumer', ['c', 'cpp'], default_options: ['cpp_std=c++26'])
+cpp_consumer = executable('cpp-consumer', 'consumer.cpp', dependencies: dependency('draconis', static: true))
+c_consumer = executable('c-consumer', 'consumer.c', dependencies: dependency('draconis-c'))
+test('Installed C++ SDK', cpp_consumer)
+test('Installed C SDK', c_consumer)

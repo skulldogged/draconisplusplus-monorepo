@@ -53,7 +53,7 @@ namespace draconis::utils::cache {
     }
 
     static auto tempDirectory() -> CachePolicy {
-      return { .location = CacheLocation::TempDirectory, .ttl = types::None };
+      return { .location = CacheLocation::TempDirectory, .ttl = seconds(60) };
     }
   };
 
@@ -68,6 +68,16 @@ namespace draconis::utils::cache {
      * "--ignore-cache" option without having to modify every call-site.
      */
     static inline std::atomic_bool ignoreCache = false;
+
+    // Type-erased cache entries may contain destructors instantiated in a
+    // plugin module. Retain that code until every entry has been destroyed.
+    auto retainModule(const std::shared_ptr<void>& module) -> void {
+      if (!module)
+        return;
+      const std::lock_guard lock(m_cacheMutex);
+      if (std::ranges::find(m_moduleLeases, module) == m_moduleLeases.end())
+        m_moduleLeases.push_back(module);
+    }
 
     /**
      * @brief Get the persistent cache directory path for the current platform.
@@ -92,22 +102,55 @@ namespace draconis::utils::cache {
       return fs::temp_directory_path() / "draconis++";
     }
 
-    CacheManager() : m_globalPolicy { .location = CacheLocation::Persistent, .ttl = days(1) } {}
+    explicit CacheManager(types::Option<fs::path> directory = {})
+      : m_globalPolicy { .location = CacheLocation::Persistent, .ttl = seconds(60) }, m_directory(std::move(directory)) {}
+
+    static auto isValidKey(const types::String& key) -> bool {
+      const fs::path path(key);
+      return !key.empty() && key != "." && key != ".." &&
+        key.find_first_of("/\\:\0", 0, 4) == types::String::npos && !path.has_root_path() && !path.has_parent_path();
+    }
+
+    template <typename T>
+    auto get(const types::String& key, types::Option<CachePolicy> policy = {}) -> types::Option<T> {
+      if (!isValidKey(key))
+        return types::None;
+      auto result = getOrSet<T>(key, policy, []() -> types::Result<T> {
+        return types::Err(error::DracError(error::DracErrorCode::NotFound, "Cache miss"));
+      });
+      if (result)
+        return std::move(*result);
+      return types::None;
+    }
+
+    template <typename T>
+    auto set(const types::String& key, const T& value, const CachePolicy& policy) -> void {
+      if (m_ignoreCache->load(std::memory_order_relaxed) || !isValidKey(key))
+        return;
+      invalidate(key);
+      (void)getOrSet<T>(key, policy, [&]() -> types::Result<T> { return value; });
+    }
 
     auto setGlobalPolicy(const CachePolicy& policy) -> types::Unit {
       types::LockGuard lock(m_cacheMutex);
       m_globalPolicy = policy;
+      m_inMemoryCache.clear();
+      m_inFlight.clear();
+      ++m_globalGeneration;
     }
 
     template <typename T>
     struct CacheEntry {
       T                         data;
+      types::u64                created = 0;
+      types::u32                schema  = 2;
       types::Option<types::u64> expires; // store as UNIX timestamp (seconds since epoch), None if no expiry
     };
 
     struct MemoryCacheEntry {
       std::any                 data;
       system_clock::time_point expires;
+      system_clock::time_point created;
     };
 
     struct InFlightEntry {
@@ -123,7 +166,7 @@ namespace draconis::utils::cache {
       Fetcher&&                  fetcher
     ) -> types::Result<T> {
       if constexpr (DRAC_ENABLE_CACHING) {
-        if (ignoreCache.load(std::memory_order_relaxed))
+        if (m_ignoreCache->load(std::memory_order_relaxed) || !isValidKey(key))
           return fetcher();
 
         static_assert(std::copy_constructible<T>, "Cached values must be copy constructible");
@@ -139,7 +182,8 @@ namespace draconis::utils::cache {
           policy = overridePolicy.value_or(m_globalPolicy);
 
           if (const auto iter = m_inMemoryCache.find(key); iter != m_inMemoryCache.end()) {
-            if (system_clock::now() >= iter->second.expires) {
+            const auto expiry = policy.ttl ? std::min(iter->second.expires, iter->second.created + *policy.ttl) : iter->second.expires;
+            if (system_clock::now() >= expiry) {
               m_inMemoryCache.erase(iter);
             } else if (const auto* value = std::any_cast<T>(&iter->second.data)) {
               return *value;
@@ -181,14 +225,17 @@ namespace draconis::utils::cache {
               if (types::Option<types::String> fileContents = readCacheFile(*filePath)) {
                 CacheEntry<T> entry;
                 if (glz::read_beve(entry, *fileContents) == glz::error_code::none) {
-                  const system_clock::time_point expiry = entry.expires.has_value()
+                  const system_clock::time_point created = system_clock::time_point(seconds(entry.created));
+                  system_clock::time_point       expiry  = entry.expires.has_value()
                     ? system_clock::time_point(seconds(*entry.expires))
                     : system_clock::time_point::max();
 
-                  if (system_clock::now() < expiry) {
+                  if (policy.ttl)
+                    expiry = std::min(expiry, created + *policy.ttl);
+                  if (entry.schema == 2 && entry.created > 0 && system_clock::now() < expiry) {
                     validDiskEntry              = true;
                     types::Result<T> diskResult = entry.data;
-                    publishMemoryIfCurrent(key, entry.data, expiry, keyGeneration, globalGeneration);
+                    publishMemoryIfCurrent(key, entry.data, expiry, created, keyGeneration, globalGeneration);
                     complete(&diskResult);
                     return diskResult;
                   }
@@ -209,18 +256,21 @@ namespace draconis::utils::cache {
             return fetchedResult;
           }
 
+          const auto                created = system_clock::now();
           types::Option<types::u64> expiryTimestamp;
           system_clock::time_point  expiry = system_clock::time_point::max();
           if (policy.ttl.has_value()) {
-            expiry          = system_clock::now() + *policy.ttl;
+            expiry          = created + *policy.ttl;
             expiryTimestamp = duration_cast<seconds>(expiry.time_since_epoch()).count();
           }
 
-          const bool published = publishMemoryIfCurrent(key, *fetchedResult, expiry, keyGeneration, globalGeneration);
+          const bool published = publishMemoryIfCurrent(key, *fetchedResult, expiry, created, keyGeneration, globalGeneration);
 
           if (published && policy.location != CacheLocation::InMemory && filePath) {
             CacheEntry<T> newEntry {
               .data    = *fetchedResult,
+              .created = static_cast<types::u64>(duration_cast<seconds>(created.time_since_epoch()).count()),
+              .schema  = 2,
               .expires = expiryTimestamp
             };
 
@@ -260,6 +310,8 @@ namespace draconis::utils::cache {
       if constexpr (DRAC_ENABLE_CACHING) {
         types::LockGuard lock(m_cacheMutex);
         m_inMemoryCache.erase(key);
+        // Existing waiters retain their flight; new callers claim a fresh one.
+        m_inFlight.erase(key);
         ++m_keyGenerations[key];
 
         for (const CacheLocation loc : { CacheLocation::TempDirectory, CacheLocation::Persistent })
@@ -283,11 +335,12 @@ namespace draconis::utils::cache {
       if constexpr (DRAC_ENABLE_CACHING) {
         types::LockGuard lock(m_cacheMutex);
         m_inMemoryCache.clear();
+        m_inFlight.clear();
         m_keyGenerations.clear();
         ++m_globalGeneration;
 
-        return removeCacheFiles(getPersistentCacheDir(), logRemovals, "persistent") +
-          removeCacheFiles(getTempCacheDir(), logRemovals, "temporary");
+        return removeCacheFiles(m_directory.value_or(getPersistentCacheDir()), logRemovals, "persistent") +
+          removeCacheFiles(m_directory.value_or(getTempCacheDir()), logRemovals, "temporary");
       } else {
         (void)logRemovals;
         return 0;
@@ -295,7 +348,13 @@ namespace draconis::utils::cache {
     }
 
    private:
-    CachePolicy m_globalPolicy;
+    // Declared first: destroyed after typed entries and in-flight outcomes.
+    std::vector<std::shared_ptr<void>> m_moduleLeases;
+    // Observe the flag in the module that created this service, including when
+    // getOrSet<T> is instantiated in a separately loaded plugin DLL.
+    const std::atomic_bool* m_ignoreCache = &ignoreCache;
+    CachePolicy             m_globalPolicy;
+    types::Option<fs::path> m_directory;
 
     // Typed values avoid deserializing BEVE data on every in-memory hit.
     types::UnorderedMap<types::String, MemoryCacheEntry>               m_inMemoryCache;
@@ -326,6 +385,7 @@ namespace draconis::utils::cache {
       const types::String&           key,
       const T&                       value,
       const system_clock::time_point expiry,
+      const system_clock::time_point created,
       const types::u64               keyGeneration,
       const types::u64               globalGeneration
     ) -> bool {
@@ -333,7 +393,7 @@ namespace draconis::utils::cache {
       if (!isGenerationCurrentLocked(key, keyGeneration, globalGeneration))
         return false;
 
-      m_inMemoryCache.insert_or_assign(key, MemoryCacheEntry { .data = value, .expires = expiry });
+      m_inMemoryCache.insert_or_assign(key, MemoryCacheEntry { .data = value, .expires = expiry, .created = created });
       return true;
     }
 
@@ -361,7 +421,7 @@ namespace draconis::utils::cache {
         return types::None;
 
       const std::streampos endPosition = stream.tellg();
-      if (endPosition < 0)
+      if (endPosition < 0 || endPosition > 16 * 1024 * 1024)
         return types::None;
 
       types::String contents(static_cast<types::usize>(endPosition), '\0');
@@ -459,13 +519,16 @@ namespace draconis::utils::cache {
       return removedCount;
     }
 
-    static auto getCacheFilePath(const types::String& key, const CacheLocation location) -> types::Option<fs::path> {
+    auto getCacheFilePath(const types::String& key, const CacheLocation location) const -> types::Option<fs::path> {
       if (location == CacheLocation::InMemory)
         return types::None;
 
       const fs::path keyPath(key);
-      if (key.empty() || key == "." || key == ".." || keyPath.has_root_path() || keyPath.has_parent_path())
+      if (!isValidKey(key))
         return types::None;
+
+      if (m_directory)
+        return *m_directory / keyPath;
 
       if (location == CacheLocation::TempDirectory)
         return types::Some(getTempCacheDir() / keyPath);
@@ -539,6 +602,6 @@ namespace glz {
   struct meta<draconis::utils::cache::CacheManager::CacheEntry<Tp>> {
     using T = draconis::utils::cache::CacheManager::CacheEntry<Tp>;
 
-    static constexpr detail::Object value = object("data", &T::data, "expires", &T::expires);
+    static constexpr detail::Object value = object("data", &T::data, "created", &T::created, "schema", &T::schema, "expires", &T::expires);
   };
 } // namespace glz

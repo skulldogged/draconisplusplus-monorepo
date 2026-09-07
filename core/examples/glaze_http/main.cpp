@@ -53,17 +53,17 @@ namespace {
 
 namespace {
   struct SystemProperty {
-  String name;
-  String value;
-  String error;
-  bool   hasError = false;
+    String name;
+    String value;
+    String error;
+    bool   hasError = false;
 
-  SystemProperty(String name, String value)
-    : name(std::move(name)), value(std::move(value)) {}
+    SystemProperty(String name, String value)
+      : name(std::move(name)), value(std::move(value)) {}
 
-  SystemProperty(String name, const DracError& err)
-    : name(std::move(name)), error(std::format("{} ({})", err.message, magic_enum::enum_name(err.code))), hasError(true) {}
-};
+    SystemProperty(String name, const DracError& err)
+      : name(std::move(name)), error(std::format("{} ({})", err.message, magic_enum::enum_name(err.code))), hasError(true) {}
+  };
 
   struct SystemInfo {
     Vec<SystemProperty> properties;
@@ -95,17 +95,22 @@ namespace glz {
 } // namespace glz
 
 auto main() -> i32 {
-  glz::http_server server;
+  // Request handlers share typed cache entries; source TTLs still govern freshness.
+  draconis::utils::cache::CacheManager cacheManager;
+  // Static assets are a startup snapshot. Restart the example to reload them.
+  const Result<String> htmlTemplate = readFile(indexFile);
+  const Result<String> stylesheet   = readFile(stylingFile);
+  glz::http_server     server;
 
   server.on_error([](const std::error_code errc, const std::source_location& loc) -> void {
     if (errc != asio::error::operation_aborted)
       error_log("Server error at {}:{} -> {}", loc.file_name(), loc.line(), errc.message());
   });
 
-  server.get("/style.css", [](const glz::request& req, glz::response& res) -> void {
+  server.get("/style.css", [&stylesheet](const glz::request& req, glz::response& res) -> void {
     info_log("Handling request for style.css from {}", req.remote_ip);
 
-    Result<String> result = readFile(stylingFile);
+    const Result<String>& result = stylesheet;
 
     if (result) {
       res.header("Content-Type", "text/css; charset=utf-8")
@@ -119,12 +124,10 @@ auto main() -> i32 {
     }
   });
 
-  server.get("/", [](const glz::request& req, glz::response& res) -> void {
+  server.get("/", [&cacheManager, &htmlTemplate](const glz::request& req, glz::response& res) -> void {
     info_log("Handling request from {}", req.remote_ip);
 
     SystemInfo sysInfo;
-
-    draconis::utils::cache::CacheManager cacheManager;
 
     {
       using namespace draconis::core::system;
@@ -163,8 +166,6 @@ auto main() -> i32 {
       addProperty("Memory", GetMemInfo(cacheManager));
       addProperty("Disk Usage", GetDiskUsage(cacheManager));
     }
-
-    Result<String> htmlTemplate = readFile(indexFile);
 
     if (!htmlTemplate) {
       error_log("Failed to read HTML template: {}", htmlTemplate.error().message);

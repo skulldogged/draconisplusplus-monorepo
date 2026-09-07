@@ -1,67 +1,21 @@
 c3c = find_program('c3c', required: true)
-
-c3_dir = meson.current_source_dir()
-c3_build_dir = meson.current_build_dir()
-example_src = c3_dir / 'examples' / 'demo.c3'
-
-example_output = host_system == 'windows' ? 'demo_c3.exe' : 'demo_c3'
-
-build_root = meson.project_build_root()
-# Prefer the static archive target if the main library is shared.
-if build_shared_draconis_c
-  c_archive = draconis_c_static.full_path()
-  c3_native_dep = draconis_c_static
-else
-  c_archive = draconis_c.full_path()
-  c3_native_dep = draconis_c
+c3_runtime_dir = fs.parent(draconis_c_shared.full_path())
+c3_flags = ['-L', c3_runtime_dir, '-l', 'draconis_c', '--trust=include']
+if host_system == 'windows'
+  c3_flags += '--wincrt=static'
 endif
-dracpp_archive = build_root / 'subprojects' / 'draconis' / 'src' / 'Lib' / 'libdrac++.a'
-
 c3_example_exe = custom_target('demo_c3',
-  input: example_src,
-  output: example_output,
-  command: [
-    c3c, 'compile', '@INPUT@',
-    '--sources', c3_dir / 'draconis.c3', c3_dir / 'draconis_raw.c3',
-    '--path', c3_build_dir,
-    '--path', c3_dir,
-    '-o', '@OUTPUT@',
-    '--wincrt=static',
-    '-l', 'advapi32',
-    '-l', 'ole32',
-    '-l', 'dxgi',
-    '-l', 'iphlpapi',
-    '-z', c_archive,
-    '-z', dracpp_archive,
-    '--trust=include',
-  ],
-  depends: [c3_native_dep],
-  console: true,
-  build_by_default: false,
+  input: ['examples/demo.c3', 'draconis.c3', 'draconis_raw.c3'],
+  output: host_system == 'windows' ? 'demo_c3.exe' : 'demo_c3',
+  command: [c3c, 'compile', '@INPUT@', '-o', meson.current_build_dir() / 'demo_c3'] + c3_flags,
+  depends: draconis_c_shared, build_by_default: true,
 )
-
-demo_c3_path = c3_build_dir / example_output
-
-# Meson requires run_target programs to exist at configure time.
-# Use c3c compile-run instead to build+run the example on demand.
-c3_example = custom_target('c3_example',
-  input: example_src,
-  output: 'c3_example.stamp',
-  command: [
-    c3c, 'compile-run', '@INPUT@',
-    '--sources', c3_dir / 'draconis.c3', c3_dir / 'draconis_raw.c3',
-    '--path', c3_build_dir,
-    '--path', c3_dir,
-    '--wincrt=static',
-    '-l', 'advapi32',
-    '-l', 'ole32',
-    '-l', 'dxgi',
-    '-l', 'iphlpapi',
-    '-z', c_archive,
-    '-z', dracpp_archive,
-    '--trust=include',
-  ],
-  depends: [c3_native_dep],
-  console: true,
-  build_by_default: false,
-)
+c3_env = environment()
+if host_system == 'windows'
+  c3_env.prepend('PATH', c3_runtime_dir)
+elif host_system == 'darwin'
+  c3_env.prepend('DYLD_LIBRARY_PATH', c3_runtime_dir)
+else
+  c3_env.prepend('LD_LIBRARY_PATH', c3_runtime_dir)
+endif
+run_target('c3_example', command: c3_example_exe, depends: draconis_c_shared, env: c3_env)

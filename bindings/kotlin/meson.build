@@ -42,3 +42,18 @@ draconis_jni = shared_library('draconis_jni',
   dependencies: [jni_dep, draconis_c_dep],
   install: true,
 )
+
+kotlin_paths = configure_file(input: 'drac_kotlin_paths.ini.in', output: 'drac_kotlin_paths.ini',
+  configuration: {'JNI_LIB_DIR': fs.parent(draconis_jni.full_path())},
+)
+gradle = find_program('gradle', required: true)
+kotlin_env = environment()
+kotlin_env.set('DRAC_CONFIG_PATH', kotlin_paths.full_path())
+kotlin_build = custom_target('kotlin_bindings',
+  depend_files: files('build.gradle.kts', 'src/main/kotlin/draconis/CacheManager.kt', 'src/test/kotlin/draconis/CacheManagerTest.kt'),
+  command: [python_prog, meson.project_source_root() / 'tools/run_and_stamp.py', '@OUTPUT@', gradle, '-p', meson.current_source_dir(), 'build', '--no-daemon'],
+  output: 'kotlin_bindings.stamp', depends: draconis_jni,
+  env: kotlin_env, console: true, build_by_default: true,
+)
+run_target('kotlin_example', command: [gradle, '-p', meson.current_source_dir(), 'runExample', '--no-daemon'],
+  depends: [draconis_jni], env: kotlin_env)

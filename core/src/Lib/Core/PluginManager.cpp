@@ -168,393 +168,285 @@ namespace draconis::core::plugin {
   }
 
   auto PluginManager::initialize(const PluginConfig& config) -> Result<Unit> {
-    if (m_initialized)
-      return {};
-
-    debug_log("Initializing PluginManager...");
-
-    // Check if plugins are enabled in config
-    if (!config.enabled) {
-      debug_log("Plugin system disabled in configuration");
-      m_initialized = true;
-      return {};
-    }
-
-    // Add default search paths
-    for (const fs::path& path : GetDefaultPluginPaths())
-      addSearchPath(path);
-
     {
-      const std::unique_lock<std::shared_mutex> lock(m_mutex);
-      // Scan for plugins in all search paths
-      if (auto scanResult = scanForPlugins(); !scanResult) {
-        warn_log("Failed to scan for plugins: {}", scanResult.error().message);
-        // Continue initialization even if scan fails, as plugins might be loaded explicitly
-      }
+      const std::unique_lock lock(m_mutex);
+      if (m_initialized.exchange(true))
+        return {};
     }
-
+    (void)DracInitStaticPlugins();
+    if (!config.enabled)
+      return {};
+    for (const auto& path : GetDefaultPluginPaths())
+      addSearchPath(path);
+    TRY_VOID(scanForPlugins());
     CacheManager cache;
-
-    // Register statically linked plugins without constructing or initializing
-    // them. Callers load only the category needed by the active command.
-    const std::size_t staticCount = DracInitStaticPlugins();
-    debug_log("Registered {} static plugin(s) for lazy loading", staticCount);
-
-    // Auto-load plugins from config
-    for (const auto& pluginName : config.autoLoad) {
-      debug_log("Auto-loading plugin '{}' from config", pluginName);
-      if (auto loadResult = loadPlugin(pluginName, cache); !loadResult)
-        warn_log("Failed to auto-load plugin '{}': {}", pluginName, loadResult.error().message);
-    }
-
-    m_initialized = true;
-    debug_log("PluginManager initialized. Found {} discovered plugins.", listDiscoveredPlugins().size());
+    for (const auto& name : config.autoLoad)
+      if (auto result = loadPlugin(name, cache); !result)
+        warn_log("Failed to auto-load '{}': {}", name, result.error().message);
     return {};
   }
 
   auto PluginManager::shutdown() -> Unit {
-    if (!m_initialized)
-      return;
-
-    debug_log("Shutting down PluginManager...");
-
-    // Unload all loaded plugins
-    Vec<String> pluginNamesToUnload;
-    pluginNamesToUnload.reserve(m_plugins.size());
-
+    Map<String, std::shared_ptr<LoadedPlugin>> retired;
     {
-      const std::shared_lock<std::shared_mutex> lock(m_mutex);
-      for (const auto& [name, loadedPlugin] : m_plugins)
-        if (loadedPlugin.isLoaded)
-          pluginNamesToUnload.push_back(name);
+      const std::unique_lock lock(m_mutex);
+      retired.swap(m_plugins);
+      m_loading.clear();
+      m_providerMetadata.clear();
+      ++m_generation;
+      m_initialized = false;
     }
-
-    for (const auto& name : pluginNamesToUnload)
-      if (auto result = unloadPlugin(name); !result)
-        error_log("Failed to unload plugin '{}': {}", name, result.error().message);
-
-    m_plugins.clear();
-    m_initialized = false;
-    debug_log("PluginManager shut down.");
+    // Destructors and plugin callbacks run outside the manager lock.
   }
 
   auto PluginManager::addSearchPath(const fs::path& path) -> Unit {
-    const std::unique_lock<std::shared_mutex> lock(m_mutex);
-
-    // Add only if not already present
-    if (std::ranges::find(m_pluginSearchPaths, path) == m_pluginSearchPaths.end()) {
+    const std::unique_lock lock(m_mutex);
+    if (std::ranges::find(m_pluginSearchPaths, path) == m_pluginSearchPaths.end())
       m_pluginSearchPaths.push_back(path);
-      debug_log("Added plugin search path: {}", path.string());
-    }
   }
 
-  auto PluginManager::getSearchPaths() const -> Span<const fs::path> {
-    const std::shared_lock<std::shared_mutex> lock(m_mutex);
+  auto PluginManager::getSearchPaths() const -> Vec<fs::path> {
+    const std::shared_lock lock(m_mutex);
     return m_pluginSearchPaths;
   }
 
   auto PluginManager::scanForPlugins() -> Result<Unit> {
-    m_discoveredPlugins.clear();
-
+    const std::unique_lock lock(m_mutex);
+    Map<String, fs::path>  discovered;
+    std::error_code        error;
     for (const auto& searchPath : m_pluginSearchPaths) {
-      if (!fs::exists(searchPath) || !fs::is_directory(searchPath))
+      if (!fs::is_directory(searchPath, error))
         continue;
-
-      for (const auto& entry : fs::directory_iterator(searchPath))
-        if (entry.is_regular_file()) {
-          const fs::path& path = entry.path();
-          if (path.extension() != PLUGIN_EXTENSION)
-            continue;
-
-          String pluginName = path.stem().string();
-          // The first discovery of a plugin with a given name wins
-          m_discoveredPlugins.try_emplace(std::move(pluginName), path);
-        }
+      fs::directory_iterator entries(searchPath, error), end;
+      while (!error && entries != end) {
+        if (entries->is_regular_file(error) && entries->path().extension() == PLUGIN_EXTENSION)
+          discovered.try_emplace(entries->path().stem().string(), entries->path());
+        entries.increment(error);
+      }
+      if (error)
+        ERR_FMT(IoError, "Cannot scan plugin directory: {}", error.message());
     }
-
+    m_discoveredPlugins.swap(discovered);
+    ++m_discoveryGeneration;
+    m_providerMetadata.clear();
     return {};
   }
 
-  auto PluginManager::loadPlugin(
-    const String&      pluginName,
-    CacheManager&      cache,
-    Option<PluginType> requiredType
-  ) -> Result<Unit> {
-    const std::unique_lock<std::shared_mutex> lock(m_mutex);
-
-    if (const auto iter = m_plugins.find(pluginName); iter != m_plugins.end() && iter->second.isLoaded) {
-      debug_log("Plugin '{}' is already loaded.", pluginName);
-      return {};
-    }
-
-    // Check if there's already a static plugin loaded with the same provider ID
-    // This prevents loading a dynamic plugin when a static version is already active
-    for (const auto& [loadedName, loadedPlugin] : m_plugins) {
-      if (!loadedPlugin.isLoaded || loadedPlugin.handle != nullptr)
-        continue; // Skip unloaded plugins or dynamic plugins
-
-      // Check if this is an info provider plugin with matching provider ID
-      if (loadedPlugin.metadata.type == PluginType::InfoProvider) {
-        if (auto* infoProvider = dynamic_cast<IInfoProviderPlugin*>(loadedPlugin.instance.get())) {
-          // Compare provider IDs - if they match, skip loading the dynamic version
-          if (infoProvider->getProviderId() == pluginName) {
-            debug_log(
-              "Skipping dynamic plugin '{}' - static plugin '{}' with same provider ID is already loaded.",
-              pluginName,
-              loadedName
-            );
-            return {};
-          }
-        }
+  auto PluginManager::constructPlugin(const String& name, const Option<fs::path>& exactPath) -> Result<std::shared_ptr<LoadedPlugin>> {
+    (void)DracInitStaticPlugins();
+    auto loaded               = std::make_shared<LoadedPlugin>();
+    loaded->cache             = std::make_shared<PluginCache>(GetPluginContext().cacheDir);
+    IPlugin* (*create)()      = nullptr;
+    void (*destroy)(IPlugin*) = nullptr;
+    std::shared_ptr<void> library;
+    if (!exactPath && IsStaticPlugin(name)) {
+      const auto entry = GetStaticPluginRegistry().at(name);
+      create           = entry.createFunc;
+      destroy          = entry.destroyFunc;
+    } else {
+      fs::path path;
+      if (exactPath) {
+        path = fs::absolute(*exactPath);
+      } else {
+        const std::shared_lock lock(m_mutex);
+        const auto             iter = m_discoveredPlugins.find(name);
+        if (iter == m_discoveredPlugins.end())
+          ERR_FMT(NotFound, "Plugin '{}' not found", name);
+        path = iter->second;
       }
+      const auto handle = TRY(loadDynamicLibrary(path));
+      library           = std::shared_ptr<void>(handle, [](void* value) {
+        unloadDynamicLibrary(static_cast<DynamicLibraryHandle>(value));
+      });
+  #ifdef _WIN32
+      auto abi = reinterpret_cast<unsigned int (*)()>(GetProcAddress(handle, "DracPluginAbiVersion"));
+  #else
+      auto abi = reinterpret_cast<unsigned int (*)()>(dlsym(handle, "DracPluginAbiVersion"));
+  #endif
+      if (!abi || abi() != 2)
+        ERR(NotSupported, "Plugin ABI mismatch; rebuild the plugin with this SDK and toolchain");
+      loaded->cache->retainModule(library);
+      create  = TRY(getCreatePluginFunc(handle));
+      destroy = TRY(getDestroyPluginFunc(handle));
+      syncPluginLogLevel(handle);
     }
+    loaded->instance = std::shared_ptr<IPlugin>(create(), [destroy, library, cache = loaded->cache](IPlugin* value) {
+      if (!value)
+        return;
+      try {
+        value->shutdown();
+      } catch (...) {}
+      try {
+        destroy(value);
+      } catch (...) {}
+    });
+    if (!loaded->instance)
+      ERR_FMT(InternalError, "Failed to create plugin '{}'", name);
+    loaded->metadata = loaded->instance->getMetadata();
+    return loaded;
+  }
 
-    // Try to load as a static plugin first (registry is empty in dynamic-only builds)
-    if (IsStaticPlugin(pluginName)) {
-      debug_log("Loading static plugin '{}'", pluginName);
+  auto PluginManager::createInfoProvider(const String& name, Option<fs::path> exactPath) -> Result<PluginHandle<IInfoProviderPlugin>> {
+    auto                              instance = TRY(constructPlugin(name, exactPath));
+    PluginHandle<IInfoProviderPlugin> result(instance);
+    if (!result)
+      ERR(InvalidArgument, "Plugin is not an information provider");
+    return result;
+  }
 
-      LoadedPlugin loadedPlugin;
-      loadedPlugin.path   = fs::path("<static>");
-      loadedPlugin.handle = nullptr; // No dynamic library handle for static plugins
-
-      IPlugin* instance = CreateStaticPlugin(pluginName);
-      if (!instance)
-        ERR_FMT(InternalError, "Failed to create static plugin instance for '{}'", pluginName);
-
-      loadedPlugin.instance.reset(instance);
-      loadedPlugin.metadata = loadedPlugin.instance->getMetadata();
-
-      if (requiredType && loadedPlugin.metadata.type != *requiredType)
+  auto PluginManager::loadPlugin(const String& name, CacheManager& /*cache*/, Option<PluginType> requiredType, const std::function<bool(StringView)>& providerFilter) -> Result<Unit> {
+    u64                              generation;
+    u64                              discoveryGeneration;
+    Option<Pair<PluginType, String>> knownProvider;
+    {
+      const std::unique_lock lock(m_mutex);
+      if (m_plugins.contains(name))
         return {};
-
-      loadedPlugin.isLoaded = true;
-
-      if (auto initResult = initializePluginInstance(loadedPlugin, cache); !initResult) {
-        warn_log("Static plugin '{}' failed to initialize: {}", pluginName, initResult.error().message);
-        m_plugins.emplace(pluginName, std::move(loadedPlugin));
-        return initResult;
+      if (m_loading.contains(name))
+        ERR(ResourceExhausted, "Plugin is already being initialized");
+      generation          = m_generation;
+      discoveryGeneration = m_discoveryGeneration;
+      if (const auto metadata = m_providerMetadata.find(name); metadata != m_providerMetadata.end())
+        knownProvider = metadata->second;
+      m_loading.emplace(name, generation);
+    }
+    auto finish = [&] {
+      const std::unique_lock lock(m_mutex);
+      if (generation == m_generation)
+        m_loading.erase(name);
+    };
+    try {
+      // Provider IDs are discovered without initialization and reused on later requests.
+      // Run caller predicates outside the manager lock.
+      if (knownProvider && ((requiredType && knownProvider->first != *requiredType) || (providerFilter && (knownProvider->first != PluginType::InfoProvider || !providerFilter(knownProvider->second))))) {
+        finish();
+        return {};
       }
-
-      // Add to type-safe caches if ready
-      if (loadedPlugin.isReady) {
-        switch (loadedPlugin.metadata.type) {
-          case PluginType::InfoProvider:
-            if (auto* plugin = dynamic_cast<IInfoProviderPlugin*>(loadedPlugin.instance.get()))
-              m_infoProviderPlugins.push_back(plugin);
-            break;
-          case PluginType::OutputFormat:
-            if (auto* plugin = dynamic_cast<IOutputFormatPlugin*>(loadedPlugin.instance.get()))
-              m_outputFormatPlugins.push_back(plugin);
-            break;
+      auto result = constructPlugin(name);
+      if (!result) {
+        finish();
+        return std::unexpected(result.error());
+      }
+      auto                     instance = std::move(*result);
+      Pair<PluginType, String> metadata { instance->metadata.type, {} };
+      if (const auto* provider = dynamic_cast<IInfoProviderPlugin*>(instance->instance.get()))
+        metadata.second = provider->getProviderId();
+      {
+        const std::unique_lock lock(m_mutex);
+        if (generation == m_generation && discoveryGeneration == m_discoveryGeneration)
+          m_providerMetadata.insert_or_assign(name, metadata);
+      }
+      if (requiredType && instance->metadata.type != *requiredType) {
+        finish();
+        return {};
+      }
+      if (providerFilter) {
+        if (metadata.first != PluginType::InfoProvider || !providerFilter(metadata.second)) {
+          finish();
+          return {};
         }
       }
-
-      m_plugins.emplace(pluginName, std::move(loadedPlugin));
-      debug_log("Static plugin '{}' loaded and initialized successfully.", pluginName);
-      return {};
-    }
-
-    // Fall back to dynamic loading
-    const auto discoveredIter = m_discoveredPlugins.find(pluginName);
-    if (discoveredIter == m_discoveredPlugins.end())
-      ERR_FMT(NotFound, "Plugin '{}' not found in search paths.", pluginName);
-
-    const fs::path& pluginPath = discoveredIter->second;
-
-    debug_log("Loading plugin '{}' from '{}'", pluginName, pluginPath.string());
-
-    LoadedPlugin loadedPlugin;
-    loadedPlugin.path = pluginPath;
-
-    if (Result<DynamicLibraryHandle> handleResult = loadDynamicLibrary(pluginPath); !handleResult)
-      return std::unexpected(handleResult.error());
-    else
-      loadedPlugin.handle = *handleResult;
-
-    // Sync log level with the plugin before creating the instance
-    syncPluginLogLevel(loadedPlugin.handle);
-
-    if (Result<IPlugin* (*)()> createFuncResult = getCreatePluginFunc(loadedPlugin.handle); !createFuncResult) {
-      unloadDynamicLibrary(loadedPlugin.handle);
-      return std::unexpected(createFuncResult.error());
-    } else {
-      loadedPlugin.instance.reset((*createFuncResult)());
-    }
-
-    if (!loadedPlugin.instance) {
-      unloadDynamicLibrary(loadedPlugin.handle);
-      ERR_FMT(InternalError, "Failed to create instance for plugin '{}'", pluginName);
-    }
-
-    loadedPlugin.metadata = loadedPlugin.instance->getMetadata();
-
-    if (requiredType && loadedPlugin.metadata.type != *requiredType) {
-      loadedPlugin.instance.reset();
-      unloadDynamicLibrary(loadedPlugin.handle);
-      return {};
-    }
-
-    loadedPlugin.isLoaded = true;
-
-    if (auto initResult = initializePluginInstance(loadedPlugin, cache); !initResult) {
-      warn_log("Plugin '{}' failed to initialize: {}", pluginName, initResult.error().message);
-      m_plugins.emplace(pluginName, std::move(loadedPlugin));
-      return initResult;
-    }
-
-    // Add to type-safe caches if ready
-    if (loadedPlugin.isReady) {
-      switch (loadedPlugin.metadata.type) {
-        case PluginType::InfoProvider:
-          if (auto* plugin = dynamic_cast<IInfoProviderPlugin*>(loadedPlugin.instance.get()))
-            m_infoProviderPlugins.push_back(plugin);
-          break;
-        case PluginType::OutputFormat:
-          if (auto* plugin = dynamic_cast<IOutputFormatPlugin*>(loadedPlugin.instance.get()))
-            m_outputFormatPlugins.push_back(plugin);
-          break;
+      auto initialized = InitializePlugin(instance);
+      if (!initialized) {
+        finish();
+        return initialized;
       }
-    }
-
-    m_plugins.emplace(pluginName, std::move(loadedPlugin));
-    debug_log("Plugin '{}' loaded and initialized successfully.", pluginName);
-    return {};
-  }
-
-  auto PluginManager::loadPluginsOfType(PluginType type, CacheManager& cache) -> Unit {
-    Vec<String> candidates;
-    candidates.reserve(GetStaticPluginRegistry().size() + m_discoveredPlugins.size());
-
-    for (const auto& [name, entry] : GetStaticPluginRegistry()) {
-      (void)entry;
-      candidates.push_back(name);
-    }
-
-    for (const auto& [name, path] : m_discoveredPlugins) {
-      (void)path;
-      candidates.push_back(name);
-    }
-
-    for (const auto& name : candidates)
-      if (!isPluginLoaded(name))
-        if (auto result = loadPlugin(name, cache, type); !result)
-          debug_log("Failed to lazily load plugin '{}': {}", name, result.error().message);
-  }
-
-  auto PluginManager::unloadPlugin(const String& pluginName) -> Result<Unit> {
-    const std::unique_lock<std::shared_mutex> lock(m_mutex);
-
-    const auto pluginIter = m_plugins.find(pluginName);
-    if (pluginIter == m_plugins.end())
-      ERR_FMT(NotFound, "Plugin '{}' is not loaded.", pluginName);
-
-    LoadedPlugin& loadedPlugin = pluginIter->second;
-
-    if (loadedPlugin.isReady) {
-      debug_log("Shutting down plugin instance '{}'", pluginName);
-      loadedPlugin.instance->shutdown();
-      loadedPlugin.isReady = false;
-    }
-
-    // Remove from type-safe caches
-    switch (loadedPlugin.metadata.type) {
-      case PluginType::InfoProvider:
-        std::erase_if(m_infoProviderPlugins, [&](const IInfoProviderPlugin* plugin) -> bool {
-          return plugin == loadedPlugin.instance.get();
-        });
-        break;
-      case PluginType::OutputFormat:
-        std::erase_if(m_outputFormatPlugins, [&](const IOutputFormatPlugin* plugin) -> bool {
-          return plugin == loadedPlugin.instance.get();
-        });
-        break;
-    }
-
-    debug_log("Destroying plugin instance '{}'", pluginName);
-
-    // Handle static plugins (identified by nullptr handle)
-    if (loadedPlugin.handle == nullptr) {
-      DestroyStaticPlugin(pluginName, loadedPlugin.instance.release());
-      m_plugins.erase(pluginIter);
-      debug_log("Static plugin '{}' unloaded successfully.", pluginName);
+      {
+        const std::unique_lock lock(m_mutex);
+        if (generation != m_generation)
+          ERR(ApiUnavailable, "Plugin manager shut down during initialization");
+        m_loading.erase(name);
+        m_plugins.emplace(name, std::move(instance));
+      }
       return {};
+    } catch (...) {
+      finish();
+      throw;
     }
+  }
 
-    // Handle dynamic plugins
-    if (auto destroyFuncResult = getDestroyPluginFunc(loadedPlugin.handle); destroyFuncResult) {
-      (*destroyFuncResult)(loadedPlugin.instance.release());
-    } else {
-      error_log("Failed to get destroyPlugin function for '{}': {}", pluginName, destroyFuncResult.error().message);
-      delete loadedPlugin.instance.release();
+  auto PluginManager::loadPluginsOfType(PluginType type, CacheManager& cache, const std::function<bool(StringView)>& providerFilter) -> Unit {
+    for (const auto& name : listDiscoveredPlugins())
+      if (auto result = loadPlugin(name, cache, type, providerFilter); !result)
+        debug_log("Failed to load '{}': {}", name, result.error().message);
+  }
+
+  auto PluginManager::unloadPlugin(const String& name) -> Result<Unit> {
+    std::shared_ptr<LoadedPlugin> retired;
+    {
+      const std::unique_lock lock(m_mutex);
+      const auto             iter = m_plugins.find(name);
+      if (iter == m_plugins.end())
+        ERR_FMT(NotFound, "Plugin '{}' is not loaded", name);
+      retired = std::move(iter->second);
+      m_plugins.erase(iter);
+      m_providerMetadata.erase(name);
     }
-
-    debug_log("Unloading dynamic library for plugin '{}'", pluginName);
-    unloadDynamicLibrary(loadedPlugin.handle);
-
-    m_plugins.erase(pluginIter);
-    debug_log("Plugin '{}' unloaded successfully.", pluginName);
     return {};
   }
 
-  auto PluginManager::getPlugin(const String& pluginName) const -> Option<IPlugin*> {
-    const std::shared_lock<std::shared_mutex> lock(m_mutex);
-    if (const auto iter = m_plugins.find(pluginName); iter != m_plugins.end())
-      return iter->second.instance.get();
-
+  auto PluginManager::getPlugin(const String& name) const -> Option<PluginHandle<IPlugin>> {
+    const std::shared_lock lock(m_mutex);
+    if (const auto iter = m_plugins.find(name); iter != m_plugins.end())
+      return PluginHandle<IPlugin>(iter->second);
     return std::nullopt;
   }
 
-  auto PluginManager::getInfoProviderPlugins() const -> Span<IInfoProviderPlugin* const> {
-    const std::shared_lock<std::shared_mutex> lock(m_mutex);
-    return m_infoProviderPlugins;
+  auto PluginManager::getInfoProviderPlugins() const -> Vec<PluginHandle<IInfoProviderPlugin>> {
+    const std::shared_lock                 lock(m_mutex);
+    Vec<PluginHandle<IInfoProviderPlugin>> result;
+    for (const auto& [name, loaded] : m_plugins)
+      if (loaded->ready && loaded->metadata.type == PluginType::InfoProvider) {
+        PluginHandle<IInfoProviderPlugin> handle(loaded);
+        if (handle)
+          result.push_back(std::move(handle));
+      }
+    return result;
   }
 
-  auto PluginManager::getInfoProviderByName(const String& providerId) const -> Option<IInfoProviderPlugin*> {
-    const std::shared_lock<std::shared_mutex> lock(m_mutex);
-    for (auto* plugin : m_infoProviderPlugins) {
-      if (plugin->getProviderId() == providerId)
-        return plugin;
+  auto PluginManager::getInfoProviderByName(const String& name) const -> Option<PluginHandle<IInfoProviderPlugin>> {
+    for (const auto& handle : getInfoProviderPlugins()) {
+      const auto lock = handle.lock();
+      if (handle->getProviderId() == name)
+        return handle;
     }
     return std::nullopt;
   }
 
-  auto PluginManager::getOutputFormatPlugins() const -> Span<IOutputFormatPlugin* const> {
-    const std::shared_lock<std::shared_mutex> lock(m_mutex);
-    return m_outputFormatPlugins;
+  auto PluginManager::getOutputFormatPlugins() const -> Vec<PluginHandle<IOutputFormatPlugin>> {
+    const std::shared_lock                 lock(m_mutex);
+    Vec<PluginHandle<IOutputFormatPlugin>> result;
+    for (const auto& [name, loaded] : m_plugins)
+      if (loaded->ready && loaded->metadata.type == PluginType::OutputFormat) {
+        PluginHandle<IOutputFormatPlugin> handle(loaded);
+        if (handle)
+          result.push_back(std::move(handle));
+      }
+    return result;
   }
 
   auto PluginManager::listLoadedPlugins() const -> Vec<PluginMetadata> {
-    const std::shared_lock<std::shared_mutex> lock(m_mutex);
-    Vec<PluginMetadata>                       loadedMetadata;
-    loadedMetadata.reserve(m_plugins.size());
-
-    for (const auto& [name, loadedPlugin] : m_plugins)
-      if (loadedPlugin.isLoaded)
-        loadedMetadata.push_back(loadedPlugin.metadata);
-
-    std::ranges::sort(loadedMetadata, [](const PluginMetadata& metaA, const PluginMetadata& metaB) -> bool {
-      return metaA.name < metaB.name;
-    });
-
-    return loadedMetadata;
+    const std::shared_lock lock(m_mutex);
+    Vec<PluginMetadata>    result;
+    for (const auto& [name, plugin] : m_plugins) result.push_back(plugin->metadata);
+    return result;
   }
 
   auto PluginManager::listDiscoveredPlugins() const -> Vec<String> {
-    const std::shared_lock<std::shared_mutex> lock(m_mutex);
-    Vec<String>                               discoveredNames;
-    discoveredNames.reserve(m_discoveredPlugins.size());
-
+    (void)DracInitStaticPlugins();
+    const std::shared_lock lock(m_mutex);
+    Vec<String>            result;
+    for (const auto& [name, entry] : GetStaticPluginRegistry()) result.push_back(name);
     for (const auto& [name, path] : m_discoveredPlugins)
-      discoveredNames.push_back(name);
-
-    std::ranges::sort(discoveredNames);
-    return discoveredNames;
+      if (std::ranges::find(result, name) == result.end())
+        result.push_back(name);
+    std::ranges::sort(result);
+    return result;
   }
 
-  auto PluginManager::isPluginLoaded(const String& pluginName) const -> bool {
-    const std::shared_lock<std::shared_mutex> lock(m_mutex);
-    const auto                                iter = m_plugins.find(pluginName);
-    return iter != m_plugins.end() && iter->second.isLoaded;
+  auto PluginManager::isPluginLoaded(const String& name) const -> bool {
+    const std::shared_lock lock(m_mutex);
+    return m_plugins.contains(name);
   }
 
   auto PluginManager::loadDynamicLibrary(const fs::path& path) -> Result<DynamicLibraryHandle> {
@@ -563,7 +455,13 @@ namespace draconis::core::plugin {
     if (!handle)
       ERR_FMT(InternalError, "Failed to load DLL '{}': Error Code {}", path.string(), GetLastError());
   #else
+      // macOS frameworks can retain callback blocks after a provider's timeout.
+      // Keep plugin code mapped for those late invoke/copy/dispose callbacks.
+    #ifdef __APPLE__
+    void* handle = dlopen(path.string().c_str(), RTLD_LAZY | RTLD_NODELETE);
+    #else
     void* handle = dlopen(path.string().c_str(), RTLD_LAZY);
+    #endif
     if (!handle)
       ERR_FMT(InternalError, "Failed to load shared library '{}': {}", path.string(), dlerror());
   #endif
@@ -627,39 +525,18 @@ namespace draconis::core::plugin {
     }
   }
 
-  auto PluginManager::initializePluginInstance(LoadedPlugin& loadedPlugin, CacheManager& /*cache*/) -> Result<Unit> {
-    if (loadedPlugin.isInitialized) {
-      debug_log("Plugin '{}' is already initialized", loadedPlugin.metadata.name);
+  auto InitializePlugin(const std::shared_ptr<LoadedPlugin>& plugin) -> Result<Unit> {
+    const std::unique_lock lock(plugin->mutex);
+    if (plugin->initialized)
       return {};
-    }
-
-    debug_log("Initializing plugin instance '{}'", loadedPlugin.metadata.name);
-
-    // Create plugin context with paths
-    const PluginContext ctx = GetPluginContext();
-
-    // Ensure directories exist
-    std::error_code errc;
-    fs::create_directories(ctx.configDir, errc);
-    fs::create_directories(ctx.cacheDir, errc);
-    fs::create_directories(ctx.dataDir, errc);
-
-    // Create a PluginCache using the plugin's cache directory
-    PluginCache pluginCache(ctx.cacheDir);
-
-    if (auto initResult = loadedPlugin.instance->initialize(ctx, pluginCache); !initResult) {
-      debug_log("Plugin '{}' initialization failed: {}", loadedPlugin.metadata.name, initResult.error().message);
-      loadedPlugin.isReady = false;
-      return initResult;
-    }
-
-    debug_log("Plugin '{}' initialized successfully", loadedPlugin.metadata.name);
-    loadedPlugin.isInitialized = true;
-    loadedPlugin.isReady       = loadedPlugin.instance->isReady();
-
-    if (!loadedPlugin.isReady)
-      warn_log("Plugin '{}' initialized but is not ready", loadedPlugin.metadata.name);
-
+    const auto context = GetPluginContext();
+    const auto result  = plugin->instance->initialize(context, *plugin->cache);
+    if (!result)
+      return result;
+    plugin->ready = plugin->instance->isReady();
+    if (!plugin->ready)
+      ERR(ApiUnavailable, "Plugin initialized but is not ready");
+    plugin->initialized = true;
     return {};
   }
 } // namespace draconis::core::plugin

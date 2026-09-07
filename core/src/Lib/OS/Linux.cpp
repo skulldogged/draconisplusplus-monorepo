@@ -1,9 +1,11 @@
 #ifdef __linux__
 
   #include <algorithm>
-  #include <arpa/inet.h>          // inet_ntop
-  #include <chrono>               // std::chrono::minutes
-  #include <cpuid.h>              // __get_cpuid
+  #include <arpa/inet.h> // inet_ntop
+  #include <chrono>      // std::chrono::minutes
+  #if defined(__i386__) || defined(__x86_64__)
+    #include <cpuid.h> // __get_cpuid
+  #endif
   #include <cstring>              // std::strlen
   #include <expected>             // std::{unexpected, expected}
   #include <fcntl.h>              // open, O_RDONLY, O_CLOEXEC
@@ -13,24 +15,25 @@
   #include <glaze/beve/read.hpp>  // glz::read_beve
   #include <glaze/beve/write.hpp> // glz::write_beve
   #include <ifaddrs.h>            // getifaddrs, freeifaddrs, ifaddrs
-  #include <linux/if_packet.h>    // sockaddr_ll
-  #include <linux/limits.h>       // PATH_MAX
-  #include <map>                  // std::map
-  #include <matchit.hpp>          // matchit::{is, is_not, is_any, etc.}
-  #include <mntent.h>             // setmntent, getmntent, endmntent
-  #include <net/if.h>             // IFF_UP, IFF_LOOPBACK
-  #include <netdb.h>              // getnameinfo, NI_NUMERICHOST
-  #include <netinet/in.h>         // sockaddr_in
-  #include <ranges>               // std::views::{common, split, values}
-  #include <sstream>              // std::istringstream
-  #include <string>               // std::{getline, string (String)}
-  #include <string_view>          // std::string_view (StringView)
-  #include <sys/mman.h>           // mmap, munmap
-  #include <sys/socket.h>         // ucred, getsockopt, SOL_SOCKET, SO_PEERCRED
-  #include <sys/stat.h>           // fstat
-  #include <sys/sysinfo.h>        // sysinfo (for GetMemInfo)
-  #include <unistd.h>             // readlink
-  #include <utility>              // std::move
+  #include <limits>
+  #include <linux/if_packet.h> // sockaddr_ll
+  #include <linux/limits.h>    // PATH_MAX
+  #include <map>               // std::map
+  #include <matchit.hpp>       // matchit::{is, is_not, is_any, etc.}
+  #include <mntent.h>          // setmntent, getmntent, endmntent
+  #include <net/if.h>          // IFF_UP, IFF_LOOPBACK
+  #include <netdb.h>           // getnameinfo, NI_NUMERICHOST
+  #include <netinet/in.h>      // sockaddr_in
+  #include <ranges>            // std::views::{common, split, values}
+  #include <sstream>           // std::istringstream
+  #include <string>            // std::{getline, string (String)}
+  #include <string_view>       // std::string_view (StringView)
+  #include <sys/mman.h>        // mmap, munmap
+  #include <sys/socket.h>      // ucred, getsockopt, SOL_SOCKET, SO_PEERCRED
+  #include <sys/stat.h>        // fstat
+  #include <sys/sysinfo.h>     // sysinfo (for GetMemInfo)
+  #include <unistd.h>          // readlink
+  #include <utility>           // std::move
 
   #include "Drac++/Core/System.hpp"
   #include "Drac++/Services/Packages.hpp"
@@ -62,11 +65,11 @@ extern "C" auto issetugid() -> usize { return 0; } // NOLINT(readability-identif
 #endif
 // clang-format on
 
-#if DRAC_USE_LINKED_PCI_IDS
+  #if DRAC_USE_LINKED_PCI_IDS
 namespace draconis::os::pci_ids {
   auto Data() -> std::string_view;
 }
-#endif
+  #endif
 
 namespace {
   template <std::integral T>
@@ -854,6 +857,7 @@ namespace draconis::core::system {
   }
 
   auto GetCPUModel(CacheManager& /*cache*/) -> Result<String> {
+  #if defined(__i386__) || defined(__x86_64__)
     Array<u32, 4>   cpuInfo;
     Array<char, 49> brandString = { 0 };
 
@@ -876,70 +880,58 @@ namespace draconis::core::system {
       ERR(InternalError, "Failed to get CPU model string via CPUID");
 
     return result;
+  #else
+    std::ifstream cpuInfo("/proc/cpuinfo");
+    for (String line; std::getline(cpuInfo, line);) {
+      const auto colon = line.find(':');
+      if (colon == String::npos)
+        continue;
+      const auto key = line.substr(0, colon);
+      if (key.starts_with("model name") || key.starts_with("Hardware") || key.starts_with("Model")) {
+        const auto value = line.find_first_not_of(" \t", colon + 1);
+        if (value != String::npos)
+          return line.substr(value);
+      }
+    }
+    ERR(NotSupported, "CPU model is not exposed by this Linux architecture");
+  #endif
   }
 
+  // Counts all online CPUs, across packages, rather than the topology of the
+  // single processor executing CPUID. These are machine counts, not affinity.
   auto GetCPUCores(CacheManager& /*cache*/) -> Result<CPUCores> {
-    u32 eax = 0, ebx = 0, ecx = 0, edx = 0;
-
-    __get_cpuid(0x0, &eax, &ebx, &ecx, &edx);
-    const u32 maxLeaf   = eax;
-    const u32 vendorEbx = ebx;
-
-    u32 logicalCores  = 0;
-    u32 physicalCores = 0;
-
-    if (maxLeaf >= 0xB) {
-      u32 threadsPerCore = 0;
-      for (u32 subleaf = 0;; ++subleaf) {
-        __get_cpuid_count(0xB, subleaf, &eax, &ebx, &ecx, &edx);
-        if (ebx == 0)
-          break;
-
-        const u32 levelType         = (ecx >> 8) & 0xFF;
-        const u32 processorsAtLevel = ebx & 0xFFFF;
-
-        if (levelType == 1) // SMT (Hyper-Threading) level
-          threadsPerCore = processorsAtLevel;
-
-        if (levelType == 2) // Core level
-          logicalCores = processorsAtLevel;
-      }
-
-      if (logicalCores > 0 && threadsPerCore > 0)
-        physicalCores = logicalCores / threadsPerCore;
+    Map<Pair<i32, i32>, bool> physical;
+    usize                     logical = 0;
+    std::error_code           error;
+    const fs::path            root("/sys/devices/system/cpu");
+    fs::directory_iterator    entries(root, error), end;
+    while (!error && entries != end) {
+      const auto entry = *entries;
+      entries.increment(error);
+      const String name = entry.path().filename().string();
+      if (!name.starts_with("cpu") || name.size() == 3 || !std::ranges::all_of(StringView(name).substr(3), [](char c) { return c >= '0' && c <= '9'; }))
+        continue;
+      const auto online = ReadSysFile(entry.path() / "online");
+      if (online && *online == "0")
+        continue;
+      const auto packageText = ReadSysFile(entry.path() / "topology/physical_package_id");
+      const auto coreText    = ReadSysFile(entry.path() / "topology/core_id");
+      if (!packageText || !coreText)
+        ERR(NotSupported, "Linux does not expose physical CPU topology");
+      const auto package = TryParse<i32>(*packageText);
+      const auto core    = TryParse<i32>(*coreText);
+      if (!package || !core || *package < 0 || *core < 0)
+        ERR(NotSupported, "Linux returned unknown physical CPU topology");
+      physical.emplace(Pair<i32, i32>(*package, *core), true);
+      ++logical;
     }
-
-    if (physicalCores == 0 || logicalCores == 0) {
-      __get_cpuid(0x1, &eax, &ebx, &ecx, &edx);
-      logicalCores                 = (ebx >> 16) & 0xFF;
-      const bool hasHyperthreading = (edx & (1 << 28)) != 0;
-
-      if (hasHyperthreading) {
-        constexpr u32 vendorIntel = 0x756e6547; // "Genu"ine"Intel"
-        constexpr u32 vendorAmd   = 0x68747541; // "Auth"entic"AMD"
-
-        if (vendorEbx == vendorIntel && maxLeaf >= 0x4) {
-          __get_cpuid_count(0x4, 0, &eax, &ebx, &ecx, &edx);
-          physicalCores = ((eax >> 26) & 0x3F) + 1;
-        } else if (vendorEbx == vendorAmd) {
-          __get_cpuid(0x80000000, &eax, &ebx, &ecx, &edx); // Get max extended leaf
-          if (eax >= 0x80000008) {
-            __get_cpuid(0x80000008, &eax, &ebx, &ecx, &edx);
-            physicalCores = (ecx & 0xFF) + 1;
-          }
-        }
-      } else {
-        physicalCores = logicalCores;
-      }
-    }
-
-    if (physicalCores == 0 && logicalCores > 0)
-      physicalCores = logicalCores;
-
-    if (physicalCores == 0 || logicalCores == 0)
-      ERR(InternalError, "Failed to determine core counts via CPUID");
-
-    return CPUCores(physicalCores, logicalCores);
+    if (error)
+      ERR_FMT(IoError, "Cannot enumerate CPU topology: {}", error.message());
+    if (logical == 0 || physical.empty())
+      ERR(NotFound, "No online processors found");
+    if (logical > std::numeric_limits<u16>::max() || physical.size() > std::numeric_limits<u16>::max())
+      ERR(ResourceExhausted, "Processor count exceeds the public API range");
+    return CPUCores(static_cast<u16>(physical.size()), static_cast<u16>(logical));
   }
 
   auto GetGPUModel(CacheManager& cache) -> Result<String> {
@@ -1201,11 +1193,11 @@ namespace draconis::core::system {
       status,
       percentage,
       ReadSysFile(
-        batteryPath / std::format("/time_to_{}now", status == Discharging ? "empty" : "full")
+        batteryPath / std::format("time_to_{}_now", status == Discharging ? "empty" : "full")
       )
         .transform([](const String& timeStr) -> Option<std::chrono::seconds> {
-          if (Option<i32> timeMinutes = TryParse<i32>(timeStr); timeMinutes && *timeMinutes > 0)
-            return std::chrono::minutes(*timeMinutes);
+          if (Option<i32> timeSeconds = TryParse<i32>(timeStr); timeSeconds && *timeSeconds > 0)
+            return std::chrono::seconds(*timeSeconds);
 
           return None;
         })

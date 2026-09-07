@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 #include <Drac++/Core/System.hpp>
 
 #if DRAC_ENABLE_PLUGINS
@@ -127,19 +129,22 @@ namespace draconis::core::system {
      */
     [[nodiscard]] auto toMap() const -> types::Map<types::String, types::String>;
 
+    [[nodiscard]] static auto needsPlugins(const Config& config, types::StringView compactTemplate = {}, bool fullCollection = false) -> bool;
+
     explicit SystemInfo(
       utils::cache::CacheManager& cache,
       const Config&               config,
-      types::StringView           compactTemplate = {}
+      types::StringView           compactTemplate = {},
+      bool                        fullCollection  = false
     );
 
    private:
 #if DRAC_ENABLE_PLUGINS
     /**
-     * @brief Collect data from all system info plugins efficiently
+     * @brief Collect data from matching system info providers
      * @param cache Cache manager for plugin data persistence
      */
-    auto collectPluginData(utils::cache::CacheManager& cache) -> types::Unit;
+    auto collectPluginData(utils::cache::CacheManager& cache, const std::function<bool(types::StringView)>& providerFilter) -> types::Unit;
 #endif
   };
 

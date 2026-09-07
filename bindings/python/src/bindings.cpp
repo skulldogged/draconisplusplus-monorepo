@@ -1,14 +1,40 @@
 #include <cstdint>
 #include <draconis_c.h>
 #include <limits>
+#include <memory>
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
+#include <utility>
 
 namespace nb = nanobind;
 
 namespace {
+  template <typename T, void (*Free)(T*)>
+  struct OwnedValue {
+    T value {};
+    explicit OwnedValue(T native) : value(native) {}
+    OwnedValue(const OwnedValue&) = delete;
+    OwnedValue(OwnedValue&& other) noexcept : value(std::exchange(other.value, {})) {}
+    ~OwnedValue() {
+      Free(&value);
+    }
+  };
+  using OsInfo           = OwnedValue<DracOSInfo, DracFreeOSInfo>;
+  using DiskInfo         = OwnedValue<DracDiskInfo, DracFreeDiskInfo>;
+  using NetworkInterface = OwnedValue<DracNetworkInterface, DracFreeNetworkInterface>;
+  struct SystemInfo {
+    std::unique_ptr<DracCacheManager, decltype(&DracDestroyCacheManager)> value { DracCreateCacheManager(), &DracDestroyCacheManager };
+    SystemInfo() {
+      if (!value)
+        throw std::runtime_error("Failed to create CacheManager");
+    }
+  };
+  struct Plugin {
+    std::unique_ptr<DracPlugin, decltype(&DracUnloadPlugin)> value;
+    explicit Plugin(DracPlugin* native) : value(native, &DracUnloadPlugin) {}
+  };
   void check_error(DracErrorCode code, const char* context) {
     if (code == DRAC_SUCCESS)
       return;
@@ -18,9 +44,8 @@ namespace {
   std::string take_string(char* ptr) {
     if (!ptr)
       return "";
-    std::string result = ptr;
-    DracFreeString(ptr);
-    return result;
+    const std::unique_ptr<const char, decltype(&DracFreeString)> owner(ptr, &DracFreeString);
+    return std::string(ptr);
   }
 
   nb::object plugin_field_value_to_python(const DracPluginFieldValue& value) {
@@ -100,27 +125,27 @@ NB_MODULE(draconis, module) {
         ", logical=" + std::to_string(self.logical) + ")";
     });
 
-  nb::class_<DracOSInfo>(module, "OSInfo")
-    .def_prop_ro("name", [](const DracOSInfo& self) { return self.name ? self.name : ""; })
-    .def_prop_ro("version", [](const DracOSInfo& self) { return self.version ? self.version : ""; })
-    .def_prop_ro("id", [](const DracOSInfo& self) { return self.id ? self.id : ""; })
-    .def("__repr__", [](const DracOSInfo& self) {
-      return "OSInfo(name='" + std::string(self.name ? self.name : "") +
-        "', version='" + std::string(self.version ? self.version : "") +
-        "', id='" + std::string(self.id ? self.id : "") + "')";
+  nb::class_<OsInfo>(module, "OSInfo")
+    .def_prop_ro("name", [](const OsInfo& self) { return self.value.name ? self.value.name : ""; })
+    .def_prop_ro("version", [](const OsInfo& self) { return self.value.version ? self.value.version : ""; })
+    .def_prop_ro("id", [](const OsInfo& self) { return self.value.id ? self.value.id : ""; })
+    .def("__repr__", [](const OsInfo& self) {
+      return "OSInfo(name='" + std::string(self.value.name ? self.value.name : "") +
+        "', version='" + std::string(self.value.version ? self.value.version : "") +
+        "', id='" + std::string(self.value.id ? self.value.id : "") + "')";
     });
 
-  nb::class_<DracDiskInfo>(module, "DiskInfo")
-    .def_prop_ro("name", [](const DracDiskInfo& self) { return self.name ? self.name : ""; })
-    .def_prop_ro("mount_point", [](const DracDiskInfo& self) { return self.mountPoint ? self.mountPoint : ""; })
-    .def_prop_ro("filesystem", [](const DracDiskInfo& self) { return self.filesystem ? self.filesystem : ""; })
-    .def_prop_ro("drive_type", [](const DracDiskInfo& self) { return self.driveType ? self.driveType : ""; })
-    .def_ro("total_bytes", &DracDiskInfo::totalBytes)
-    .def_ro("used_bytes", &DracDiskInfo::usedBytes)
-    .def_ro("is_system_drive", &DracDiskInfo::isSystemDrive)
-    .def("__repr__", [](const DracDiskInfo& self) {
-      return "DiskInfo(name='" + std::string(self.name ? self.name : "") +
-        "', mount_point='" + std::string(self.mountPoint ? self.mountPoint : "") + "')";
+  nb::class_<DiskInfo>(module, "DiskInfo")
+    .def_prop_ro("name", [](const DiskInfo& self) { return self.value.name ? self.value.name : ""; })
+    .def_prop_ro("mount_point", [](const DiskInfo& self) { return self.value.mountPoint ? self.value.mountPoint : ""; })
+    .def_prop_ro("filesystem", [](const DiskInfo& self) { return self.value.filesystem ? self.value.filesystem : ""; })
+    .def_prop_ro("drive_type", [](const DiskInfo& self) { return self.value.driveType ? self.value.driveType : ""; })
+    .def_prop_ro("total_bytes", [](const DiskInfo& self) { return self.value.totalBytes; })
+    .def_prop_ro("used_bytes", [](const DiskInfo& self) { return self.value.usedBytes; })
+    .def_prop_ro("is_system_drive", [](const DiskInfo& self) { return self.value.isSystemDrive; })
+    .def("__repr__", [](const DiskInfo& self) {
+      return "DiskInfo(name='" + std::string(self.value.name ? self.value.name : "") +
+        "', mount_point='" + std::string(self.value.mountPoint ? self.value.mountPoint : "") + "')";
     });
 
   nb::class_<DracDisplayInfo>(module, "DisplayInfo")
@@ -135,21 +160,21 @@ NB_MODULE(draconis, module) {
         "@" + std::to_string(self.refreshRate) + "Hz)";
     });
 
-  nb::class_<DracNetworkInterface>(module, "NetworkInterface")
-    .def_prop_ro("name", [](const DracNetworkInterface& self) { return self.name ? self.name : ""; })
-    .def_prop_ro("ipv4_address", [](const DracNetworkInterface& self) -> std::optional<std::string> {
-      return self.ipv4Address ? std::optional<std::string>(self.ipv4Address) : std::nullopt;
+  nb::class_<NetworkInterface>(module, "NetworkInterface")
+    .def_prop_ro("name", [](const NetworkInterface& self) { return self.value.name ? self.value.name : ""; })
+    .def_prop_ro("ipv4_address", [](const NetworkInterface& self) -> std::optional<std::string> {
+      return self.value.ipv4Address ? std::optional<std::string>(self.value.ipv4Address) : std::nullopt;
     })
-    .def_prop_ro("ipv6_address", [](const DracNetworkInterface& self) -> std::optional<std::string> {
-      return self.ipv6Address ? std::optional<std::string>(self.ipv6Address) : std::nullopt;
+    .def_prop_ro("ipv6_address", [](const NetworkInterface& self) -> std::optional<std::string> {
+      return self.value.ipv6Address ? std::optional<std::string>(self.value.ipv6Address) : std::nullopt;
     })
-    .def_prop_ro("mac_address", [](const DracNetworkInterface& self) -> std::optional<std::string> {
-      return self.macAddress ? std::optional<std::string>(self.macAddress) : std::nullopt;
+    .def_prop_ro("mac_address", [](const NetworkInterface& self) -> std::optional<std::string> {
+      return self.value.macAddress ? std::optional<std::string>(self.value.macAddress) : std::nullopt;
     })
-    .def_ro("is_up", &DracNetworkInterface::isUp)
-    .def_ro("is_loopback", &DracNetworkInterface::isLoopback)
-    .def("__repr__", [](const DracNetworkInterface& self) {
-      return "NetworkInterface(name='" + std::string(self.name ? self.name : "") + "')";
+    .def_prop_ro("is_up", [](const NetworkInterface& self) { return self.value.isUp; })
+    .def_prop_ro("is_loopback", [](const NetworkInterface& self) { return self.value.isLoopback; })
+    .def("__repr__", [](const NetworkInterface& self) {
+      return "NetworkInterface(name='" + std::string(self.value.name ? self.value.name : "") + "')";
     });
 
   nb::class_<DracBattery>(module, "Battery")
@@ -168,136 +193,126 @@ NB_MODULE(draconis, module) {
       return repr;
     });
 
-  nb::class_<DracCacheManager>(module, "SystemInfo")
-    .def(nb::init([]() {
-      auto* mgr = DracCreateCacheManager();
-      if (!mgr)
-        throw std::runtime_error("Failed to create CacheManager");
-      return mgr;
-    }))
-    .def("__del__", [](DracCacheManager* self) {
-      if (self)
-        DracDestroyCacheManager(self);
-    })
+  nb::class_<SystemInfo>(module, "SystemInfo")
+    .def(nb::init<>())
+    .def("close", [](SystemInfo& self) { self.value.reset(); })
     .def_static("get_uptime", []() -> uint64_t { return DracGetUptime(); }, "Get system uptime in seconds")
-    .def("get_mem_info", [](DracCacheManager* self) -> DracResourceUsage {
+    .def("get_mem_info", [](SystemInfo* self) -> DracResourceUsage {
       DracResourceUsage usage {};
-      check_error(DracGetMemInfo(self, &usage), "get_mem_info");
+      check_error(DracGetMemInfo(self->value.get(), &usage), "get_mem_info");
       return usage; }, "Get memory usage information")
-    .def("get_cpu_cores", [](DracCacheManager* self) -> DracCPUCores {
+    .def("get_cpu_cores", [](SystemInfo* self) -> DracCPUCores {
       DracCPUCores cores {};
-      check_error(DracGetCpuCores(self, &cores), "get_cpu_cores");
+      check_error(DracGetCpuCores(self->value.get(), &cores), "get_cpu_cores");
       return cores; }, "Get CPU core counts")
-    .def("get_os", [](DracCacheManager* self) -> DracOSInfo {
+    .def("get_os", [](SystemInfo* self) -> OsInfo {
       DracOSInfo info {};
-      check_error(DracGetOperatingSystem(self, &info), "get_os");
-      return info; }, "Get operating system information")
-    .def("get_desktop_environment", [](DracCacheManager* self) -> std::string {
+      check_error(DracGetOperatingSystem(self->value.get(), &info), "get_os");
+      return OsInfo(info); }, "Get operating system information")
+    .def("get_desktop_environment", [](SystemInfo* self) -> std::string {
       char* out = nullptr;
-      check_error(DracGetDesktopEnvironment(self, &out), "get_desktop_environment");
+      check_error(DracGetDesktopEnvironment(self->value.get(), &out), "get_desktop_environment");
       return take_string(out); }, "Get desktop environment name")
-    .def("get_window_manager", [](DracCacheManager* self) -> std::string {
+    .def("get_window_manager", [](SystemInfo* self) -> std::string {
       char* out = nullptr;
-      check_error(DracGetWindowManager(self, &out), "get_window_manager");
+      check_error(DracGetWindowManager(self->value.get(), &out), "get_window_manager");
       return take_string(out); }, "Get window manager name")
-    .def("get_shell", [](DracCacheManager* self) -> std::string {
+    .def("get_shell", [](SystemInfo* self) -> std::string {
       char* out = nullptr;
-      check_error(DracGetShell(self, &out), "get_shell");
+      check_error(DracGetShell(self->value.get(), &out), "get_shell");
       return take_string(out); }, "Get current shell name")
-    .def("get_host", [](DracCacheManager* self) -> std::string {
+    .def("get_host", [](SystemInfo* self) -> std::string {
       char* out = nullptr;
-      check_error(DracGetHost(self, &out), "get_host");
+      check_error(DracGetHost(self->value.get(), &out), "get_host");
       return take_string(out); }, "Get hostname")
-    .def("get_cpu_model", [](DracCacheManager* self) -> std::string {
+    .def("get_cpu_model", [](SystemInfo* self) -> std::string {
       char* out = nullptr;
-      check_error(DracGetCPUModel(self, &out), "get_cpu_model");
+      check_error(DracGetCPUModel(self->value.get(), &out), "get_cpu_model");
       return take_string(out); }, "Get CPU model name")
-    .def("get_gpu_model", [](DracCacheManager* self) -> std::string {
+    .def("get_gpu_model", [](SystemInfo* self) -> std::string {
       char* out = nullptr;
-      check_error(DracGetGPUModel(self, &out), "get_gpu_model");
+      check_error(DracGetGPUModel(self->value.get(), &out), "get_gpu_model");
       return take_string(out); }, "Get GPU model name")
-    .def("get_kernel_version", [](DracCacheManager* self) -> std::string {
+    .def("get_kernel_version", [](SystemInfo* self) -> std::string {
       char* out = nullptr;
-      check_error(DracGetKernelVersion(self, &out), "get_kernel_version");
+      check_error(DracGetKernelVersion(self->value.get(), &out), "get_kernel_version");
       return take_string(out); }, "Get kernel version")
-    .def("get_disk_usage", [](DracCacheManager* self) -> DracResourceUsage {
+    .def("get_disk_usage", [](SystemInfo* self) -> DracResourceUsage {
       DracResourceUsage usage {};
-      check_error(DracGetDiskUsage(self, &usage), "get_disk_usage");
+      check_error(DracGetDiskUsage(self->value.get(), &usage), "get_disk_usage");
       return usage; }, "Get total disk usage")
-    .def("get_disks", [](DracCacheManager* self) -> std::vector<DracDiskInfo> {
+    .def("get_disks", [](SystemInfo* self) -> std::vector<DiskInfo> {
       DracDiskInfoList list {};
-      check_error(DracGetDisks(self, &list), "get_disks");
-      std::vector<DracDiskInfo> result;
+      check_error(DracGetDisks(self->value.get(), &list), "get_disks");
+      OwnedValue<DracDiskInfoList, DracFreeDiskInfoList> owner(list);
+      std::vector<DiskInfo> result;
       result.reserve(list.count);
       for (size_t i = 0; i < list.count; ++i)
-        result.push_back(list.items[i]);
-      DracFreeDiskInfoList(&list);
+        result.emplace_back(std::exchange(list.items[i], {}));
       return result; }, "Get information about all disks")
-    .def("get_system_disk", [](DracCacheManager* self) -> DracDiskInfo {
+    .def("get_system_disk", [](SystemInfo* self) -> DiskInfo {
       DracDiskInfo info {};
-      check_error(DracGetSystemDisk(self, &info), "get_system_disk");
-      return info; }, "Get system disk information")
-    .def("get_outputs", [](DracCacheManager* self) -> std::vector<DracDisplayInfo> {
+      check_error(DracGetSystemDisk(self->value.get(), &info), "get_system_disk");
+      return DiskInfo(info); }, "Get system disk information")
+    .def("get_outputs", [](SystemInfo* self) -> std::vector<DracDisplayInfo> {
       DracDisplayInfoList list {};
-      check_error(DracGetOutputs(self, &list), "get_outputs");
+      check_error(DracGetOutputs(self->value.get(), &list), "get_outputs");
+      OwnedValue<DracDisplayInfoList, DracFreeDisplayInfoList> owned(list);
       std::vector<DracDisplayInfo> result;
       result.reserve(list.count);
       for (size_t i = 0; i < list.count; ++i)
         result.push_back(list.items[i]);
-      DracFreeDisplayInfoList(&list);
       return result; }, "Get information about all display outputs")
-    .def("get_primary_output", [](DracCacheManager* self) -> DracDisplayInfo {
+    .def("get_primary_output", [](SystemInfo* self) -> DracDisplayInfo {
       DracDisplayInfo info {};
-      check_error(DracGetPrimaryOutput(self, &info), "get_primary_output");
+      check_error(DracGetPrimaryOutput(self->value.get(), &info), "get_primary_output");
       return info; }, "Get primary display information")
-    .def("get_network_interfaces", [](DracCacheManager* self) -> std::vector<DracNetworkInterface> {
+    .def("get_network_interfaces", [](SystemInfo* self) -> std::vector<NetworkInterface> {
       DracNetworkInterfaceList list {};
-      check_error(DracGetNetworkInterfaces(self, &list), "get_network_interfaces");
-      std::vector<DracNetworkInterface> result;
+      check_error(DracGetNetworkInterfaces(self->value.get(), &list), "get_network_interfaces");
+      OwnedValue<DracNetworkInterfaceList, DracFreeNetworkInterfaceList> owner(list);
+      std::vector<NetworkInterface> result;
       result.reserve(list.count);
       for (size_t i = 0; i < list.count; ++i)
-        result.push_back(list.items[i]);
-      DracFreeNetworkInterfaceList(&list);
+        result.emplace_back(std::exchange(list.items[i], {}));
       return result; }, "Get information about all network interfaces")
-    .def("get_primary_network_interface", [](DracCacheManager* self) -> DracNetworkInterface {
+    .def("get_primary_network_interface", [](SystemInfo* self) -> NetworkInterface {
       DracNetworkInterface iface {};
-      check_error(DracGetPrimaryNetworkInterface(self, &iface), "get_primary_network_interface");
-      return iface; }, "Get primary network interface information")
-    .def("get_battery_info", [](DracCacheManager* self) -> DracBattery {
+      check_error(DracGetPrimaryNetworkInterface(self->value.get(), &iface), "get_primary_network_interface");
+      return NetworkInterface(iface); }, "Get primary network interface information")
+    .def("get_battery_info", [](SystemInfo* self) -> DracBattery {
       DracBattery bat {};
-      check_error(DracGetBatteryInfo(self, &bat), "get_battery_info");
+      check_error(DracGetBatteryInfo(self->value.get(), &bat), "get_battery_info");
       return bat; }, "Get battery information");
 
-  nb::class_<DracPlugin>(module, "Plugin")
-    .def_static("load", [](const std::string& name) -> DracPlugin* {
+  nb::class_<Plugin>(module, "Plugin")
+    .def_static("load", [](const std::string& name) -> Plugin {
       auto* plugin = DracLoadPlugin(name.c_str());
       if (!plugin)
         throw std::runtime_error("Failed to load plugin: " + name);
-      return plugin; }, nb::arg("name"), "Load a plugin by name")
-    .def_static("load_from_path", [](const std::string& path) -> DracPlugin* {
+      return Plugin(plugin); }, nb::arg("name"), "Load a plugin by name")
+    .def_static("load_from_path", [](const std::string& path) -> Plugin {
       auto* plugin = DracLoadPluginFromPath(path.c_str());
       if (!plugin)
         throw std::runtime_error("Failed to load plugin from path: " + path);
-      return plugin; }, nb::arg("path"), "Load a plugin from a specific path")
-    .def("__del__", [](DracPlugin* self) {
-      if (self)
-        DracUnloadPlugin(self); })
-    .def("initialize", [](DracPlugin* self, DracCacheManager* cache) { check_error(DracPluginInitialize(self, cache), "plugin initialize"); }, nb::arg("cache"), "Initialize the plugin")
-    .def("is_enabled", [](DracPlugin* self) -> bool { return DracPluginIsEnabled(self); }, "Check if plugin is enabled")
-    .def("is_ready", [](DracPlugin* self) -> bool { return DracPluginIsReady(self); }, "Check if plugin is ready")
-    .def("collect_data", [](DracPlugin* self, DracCacheManager* cache) { check_error(DracPluginCollectData(self, cache), "plugin collect_data"); }, nb::arg("cache"), "Collect data from the plugin")
-    .def("get_fields", [](DracPlugin* self) -> nb::dict {
-      DracPluginFieldList fields = DracPluginGetFields(self);
+      return Plugin(plugin); }, nb::arg("path"), "Load a plugin from a specific path")
+    .def("close", [](Plugin& self) { self.value.reset(); })
+    .def("initialize", [](Plugin* self, SystemInfo* cache) { check_error(DracPluginInitialize(self->value.get(), cache->value.get()), "plugin initialize"); }, nb::arg("cache"), "Initialize the plugin")
+    .def("is_enabled", [](Plugin* self) -> bool { return DracPluginIsEnabled(self->value.get()); }, "Check if plugin is enabled")
+    .def("is_ready", [](Plugin* self) -> bool { return DracPluginIsReady(self->value.get()); }, "Check if plugin is ready")
+    .def("collect_data", [](Plugin* self, SystemInfo* cache) { check_error(DracPluginCollectData(self->value.get(), cache->value.get()), "plugin collect_data"); }, nb::arg("cache"), "Collect data from the plugin")
+    .def("get_fields", [](Plugin* self) -> nb::dict {
+      DracPluginFieldList fields = DracPluginGetFields(self->value.get());
+      OwnedValue<DracPluginFieldList, DracFreePluginFieldList> owner(fields);
       nb::dict result;
       for (size_t i = 0; i < fields.count; ++i) {
         const auto& field = fields.items[i];
         if (field.key)
           result[nb::str(field.key)] = plugin_field_value_to_python(field.value);
       }
-      DracFreePluginFieldList(&fields);
       return result; }, "Get plugin data as typed key-value pairs")
-    .def("get_last_error", [](DracPlugin* self) -> std::string {
-      char* err = DracPluginGetLastError(self);
+    .def("get_last_error", [](Plugin* self) -> std::string {
+      char* err = DracPluginGetLastError(self->value.get());
       return take_string(err); }, "Get the last error message from the plugin");
 
   module.def("init_static_plugins", []() -> size_t { return DracInitStaticPlugins(); }, "Initialize static plugins and return count");

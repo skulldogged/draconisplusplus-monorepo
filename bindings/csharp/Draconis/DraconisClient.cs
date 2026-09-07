@@ -1,18 +1,23 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using static Draconis.DraconisClient;
 
 namespace Draconis;
 
 public sealed class DraconisClient : IDisposable
 {
-    private readonly IntPtr _mgr;
+    private readonly CacheManagerHandle _mgr;
+    internal CacheManagerHandle NativeCache
+    {
+        get { EnsureNotDisposed(); return _mgr; }
+    }
     private bool _disposed;
 
     public DraconisClient()
     {
         _mgr = NativeMethods.DracCreateCacheManager();
-        if (_mgr == IntPtr.Zero)
+        if (_mgr.IsInvalid)
             throw new InvalidOperationException("Failed to create native CacheManager.");
     }
 
@@ -223,7 +228,7 @@ public sealed class DraconisClient : IDisposable
         );
     }
 
-    private delegate DracErrorCode StringGetter(IntPtr mgr, out IntPtr str);
+    private delegate DracErrorCode StringGetter(CacheManagerHandle mgr, out IntPtr str);
 
     private string? GetString(StringGetter getter)
     {
@@ -233,7 +238,7 @@ public sealed class DraconisClient : IDisposable
         return TakeString(ptr);
     }
 
-    private static string? TakeString(IntPtr ptr, bool free = true)
+    internal static string? TakeString(IntPtr ptr, bool free = true)
     {
         if (ptr == IntPtr.Zero) return null;
         var str = Marshal.PtrToStringUTF8(ptr);
@@ -259,7 +264,7 @@ public sealed class DraconisClient : IDisposable
         return results;
     }
 
-    private static void ThrowIfError(DracErrorCode code)
+    internal static void ThrowIfError(DracErrorCode code)
     {
         if (code == DracErrorCode.Success) return;
         throw new DraconisException(code);
@@ -273,7 +278,7 @@ public sealed class DraconisClient : IDisposable
     public void Dispose()
     {
         if (_disposed) return;
-        NativeMethods.DracDestroyCacheManager(_mgr);
+        _mgr.Dispose();
         _disposed = true;
         GC.SuppressFinalize(this);
     }
@@ -329,10 +334,10 @@ public readonly record struct BatteryInfo(
 // Plugin system types
 public sealed class Plugin : IDisposable
 {
-    private IntPtr _handle;
+    private readonly PluginHandle _handle;
     private bool _disposed;
 
-    internal Plugin(IntPtr handle)
+    internal Plugin(PluginHandle handle)
     {
         _handle = handle;
     }
@@ -341,20 +346,20 @@ public sealed class Plugin : IDisposable
     {
         if (string.IsNullOrEmpty(pluginName)) return null;
         var handle = NativeMethods.DracLoadPlugin(pluginName);
-        return handle == IntPtr.Zero ? null : new Plugin(handle);
+        return handle.IsInvalid ? null : new Plugin(handle);
     }
 
     public static Plugin? LoadFromPath(string path)
     {
         if (string.IsNullOrEmpty(path)) return null;
         var handle = NativeMethods.DracLoadPluginFromPath(path);
-        return handle == IntPtr.Zero ? null : new Plugin(handle);
+        return handle.IsInvalid ? null : new Plugin(handle);
     }
 
     public void Initialize(DraconisClient client)
     {
         EnsureNotDisposed();
-        var code = NativeMethods.DracPluginInitialize(_handle, client._mgr);
+        var code = NativeMethods.DracPluginInitialize(_handle, client.NativeCache);
         ThrowIfError(code);
     }
 
@@ -379,7 +384,7 @@ public sealed class Plugin : IDisposable
     public void CollectData(DraconisClient client)
     {
         EnsureNotDisposed();
-        var code = NativeMethods.DracPluginCollectData(_handle, client._mgr);
+        var code = NativeMethods.DracPluginCollectData(_handle, client.NativeCache);
         ThrowIfError(code);
     }
 
@@ -425,7 +430,7 @@ public sealed class Plugin : IDisposable
         {
             var fieldPtr = IntPtr.Add(obj.Items, (int)(i * (nuint)size));
             var field = Marshal.PtrToStructure<DracPluginField>(fieldPtr);
-            var key = TakeString(field.Key, free: false);
+            var key = TakeString(field.Key, free: false) ?? "";
             result[key] = PluginFieldValueToObject(field.Value);
         }
         return result;
@@ -472,11 +477,7 @@ public sealed class Plugin : IDisposable
     public void Dispose()
     {
         if (_disposed) return;
-        if (_handle != IntPtr.Zero)
-        {
-            NativeMethods.DracUnloadPlugin(_handle);
-            _handle = IntPtr.Zero;
-        }
+        _handle.Dispose();
         _disposed = true;
         GC.SuppressFinalize(this);
     }
