@@ -289,11 +289,12 @@ namespace draconis::core::plugin {
       destroy = TRY(getDestroyPluginFunc(handle));
       syncPluginLogLevel(handle);
     }
-    loaded->instance = std::shared_ptr<IPlugin>(create(), [destroy, library, cache = loaded->cache](IPlugin* value) {
+    loaded->instance = std::shared_ptr<IPlugin>(create(), [destroy, library, cache = loaded->cache, shutdownEligible = loaded->shutdownEligible](IPlugin* value) {
       if (!value)
         return;
       try {
-        value->shutdown();
+        if (shutdownEligible->load())
+          value->shutdown();
       } catch (...) {}
       try {
         destroy(value);
@@ -572,6 +573,7 @@ namespace draconis::core::plugin {
     const auto result = plugin->instance->initialize(context, *plugin->cache);
     if (!result)
       return result;
+    plugin->shutdownEligible->store(true);
     plugin->ready = plugin->instance->isReady();
     if (!plugin->ready)
       ERR(ApiUnavailable, "Plugin initialized but is not ready");

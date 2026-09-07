@@ -10,8 +10,10 @@
 #include "FixturePlugin.hpp"
 
 namespace {
-  int  destroyed = 0;
-  bool failNext  = false;
+  int  destroyed     = 0;
+  bool failNext      = false;
+  int  shutdownCalls = 0;
+  bool notReadyNext  = false;
   class ReentrantPlugin : public FixturePlugin {
    public:
     ~ReentrantPlugin() override {
@@ -21,11 +23,12 @@ namespace {
       (void)draconis::core::plugin::GetPluginManager().listLoadedPlugins();
       if (std::exchange(failNext, false))
         return draconis::utils::types::Err(draconis::utils::error::DracError(draconis::utils::error::DracErrorCode::ApiUnavailable, "fixture retry"));
-      ready = true;
+      ready = !std::exchange(notReadyNext, false);
       return {};
     }
     auto shutdown() -> Unit override {
       (void)draconis::core::plugin::GetPluginManager().listLoadedPlugins();
+      ++shutdownCalls;
       ready = false;
     }
   };
@@ -126,6 +129,33 @@ auto main(int argc, char** argv) -> int {
     expect(!manager.isPluginLoaded("lifecycle_fixture"));
     expect(manager.loadPlugin("lifecycle_fixture", cache).has_value());
     manager.shutdown();
+  };
+
+  "Only successfully initialized instances receive shutdown"_test = [&] {
+    manager.shutdown();
+    shutdownCalls     = 0;
+    const auto before = destroyed;
+    expect(manager.getPluginMetadata("lifecycle_fixture").has_value());
+    expect(destroyed == before + 1);
+    expect(shutdownCalls == 0_i);
+    expect(manager.loadPlugin("lifecycle_fixture", cache, {}, [](StringView) { return false; }).has_value());
+    expect(destroyed == before + 2);
+    expect(shutdownCalls == 0_i);
+    failNext = true;
+    expect(!manager.loadPlugin("lifecycle_fixture", cache));
+    expect(destroyed == before + 3);
+    expect(shutdownCalls == 0_i);
+    notReadyNext = true;
+    expect(!manager.loadPlugin("lifecycle_fixture", cache));
+    expect(destroyed == before + 4);
+    expect(shutdownCalls == 1_i);
+    expect(manager.loadPlugin("lifecycle_fixture", cache).has_value());
+    auto retained = manager.getInfoProviderPlugins();
+    manager.shutdown();
+    expect(shutdownCalls == 1_i);
+    retained.clear();
+    expect(destroyed == before + 5);
+    expect(shutdownCalls == 2_i);
   };
 
   "C handles retain dynamic modules and serialize operations"_test = [&] {

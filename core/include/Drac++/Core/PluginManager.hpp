@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -23,14 +24,16 @@ namespace draconis::core::plugin {
   #endif
 
   struct LoadedPlugin {
-    // The custom deleter calls shutdown, the matching factory destructor, then
+    // The custom deleter shuts down successfully initialized instances, calls
+    // the matching factory destructor, then
     // releases the library. Keep the cache alive through instance destruction.
-    std::shared_ptr<PluginCache> cache;
-    std::shared_ptr<IPlugin>     instance;
-    PluginMetadata               metadata;
-    mutable std::recursive_mutex mutex;
-    bool                         initialized = false;
-    bool                         ready       = false;
+    std::shared_ptr<PluginCache>       cache;
+    std::shared_ptr<std::atomic<bool>> shutdownEligible = std::make_shared<std::atomic<bool>>(false);
+    std::shared_ptr<IPlugin>           instance;
+    PluginMetadata                     metadata;
+    mutable std::recursive_mutex       mutex;
+    bool                               initialized = false;
+    bool                               ready       = false;
   };
 
   // Copyable ownership plus an explicit per-instance operation lock. Retained
